@@ -432,7 +432,7 @@ const file_proto_raft_proto_rawDesc = "" +
 	"\vRaftService\x12B\n" +
 	"\vRequestVote\x12\x18.raft.RequestVoteRequest\x1a\x19.raft.RequestVoteResponse\x12H\n" +
 	"\rAppendEntries\x12\x1a.raft.AppendEntriesRequest\x1a\x1b.raft.AppendEntriesResponse\x12N\n" +
-	"\x0fInstallSnapshot\x12\x1c.raft.InstallSnapshotRequest\x1a\x1d.raft.InstallSnapshotResponseB-Z+github.com/Krithik-sri/raft-kv/proto;raftpbb\x06proto3"
+	"\x0fInstallSnapshot\x12\x1c.raft.InstallSnapshotRequest\x1a\x1d.raft.InstallSnapshotResponseB-Z+github.com/krithik-sri/raft-kv/proto;raftpbb\x06proto3"
 
 var (
 	file_proto_raft_proto_rawDescOnce sync.Once
