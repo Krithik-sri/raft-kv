@@ -22,17 +22,30 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 	for _, peer := range r.peers {
 		go func(peer Peer) {
 			defer wg.Done()
+
 			resp, err := r.transport.RequestVote(ctx, peer, req)
+
 			if err != nil {
 				fmt.Printf("failed requesting vote from %s: %v\n", peer.ID, err)
 				return
 			}
+
 			fmt.Printf(
 				"peer=%s term=%d granted=%t\n",
 				peer.ID,
 				resp.Term,
 				resp.VoteGranted,
 			)
+
+			if resp.Term > req.Term {
+				r.becomeFollower(resp.Term)
+				return
+			}
+
+			if !r.isCandidateTerm(req.Term) {
+				return
+			}
+
 			if resp.VoteGranted {
 				votesMu.Lock()
 				votes++
@@ -40,12 +53,18 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 				votesMu.Unlock()
 
 				fmt.Printf(
-					"node=%s election term=%d votes=%d%d\n",
+					"node=%s election term=%d votes=%d majority=%d\n",
 					r.id,
 					req.Term,
 					currentVotes,
 					majority,
 				)
+
+				if currentVotes >= majority {
+					if r.becomeLeader(req.Term) {
+						fmt.Printf("node=%s became leader term=%d\n", r.id, req.Term)
+					}
+				}
 			}
 
 		}(peer)

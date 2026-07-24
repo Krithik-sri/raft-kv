@@ -60,12 +60,13 @@ func (r *Raft) Start(ctx context.Context) {
 	r.runElectionTimer(ctx)
 }
 
-func (r *Raft) becomeCandidate() {
+func (r *Raft) becomeCandidate() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.state = Candidate
 	r.currentTerm++
 	r.votedFor = r.id
+	return true
 
 }
 
@@ -85,4 +86,35 @@ func (r *Raft) makeRequestVoteRequest() RequestVoteRequest {
 		LastLogIndex: 0,
 		LastLogTerm:  0,
 	}
+}
+
+func (r *Raft) isCandidateTerm(term uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.state == Candidate && r.currentTerm == term
+}
+
+func (r *Raft) becomeFollower(term uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if term > r.currentTerm {
+		r.currentTerm = term
+		r.votedFor = ""
+	}
+
+	r.state = Follower
+}
+
+func (r *Raft) becomeLeader(term uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.state != Candidate || r.currentTerm != term {
+		return false
+	}
+
+	r.state = Leader
+	return true
 }
