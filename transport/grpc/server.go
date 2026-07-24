@@ -11,27 +11,36 @@ import (
 type Server struct {
 	raftpb.UnimplementedRaftServiceServer
 
-	id raft.NodeID
+	node *raft.Raft
 }
 
 func (s *Server) RequestVote(
 	ctx context.Context,
 	req *raftpb.RequestVoteRequest,
 ) (*raftpb.RequestVoteResponse, error) {
+
+	raftReq := raft.RequestVoteRequest{
+		Term:         req.Term,
+		CandidateID:  raft.NodeID(req.CandidateId),
+		LastLogIndex: req.LastLogIndex,
+		LastLogTerm:  req.LastLogTerm,
+	}
+
+	resp := s.node.HandleRequestVote(raftReq)
+
 	fmt.Printf(
-		"node=%s received RequestVote candidate=%s term=%d\n",
-		s.id,
+		"received RequestVote candidate=%s term=%d\n",
 		req.CandidateId,
 		req.Term,
 	)
 	return &raftpb.RequestVoteResponse{
-		Term:        0,
-		VoteGranted: false,
+		Term:        resp.Term,
+		VoteGranted: resp.VoteGranted,
 	}, nil
 }
 
-func NewServer(id raft.NodeID) *Server {
+func NewServer(node *raft.Raft) *Server {
 	return &Server{
-		id: id,
+		node: node,
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"strings"
-	"time"
 
 	raftpb "github.com/krithik-sri/raft-kv/proto"
 	"github.com/krithik-sri/raft-kv/raft"
@@ -53,24 +52,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		2*time.Second,
-	)
-	defer cancel()
-	grpcServer := grpc.NewServer()
-	server := grpctransport.NewServer(
-		raft.NodeID(*id),
-	)
 
-	raftpb.RegisterRaftServiceServer(grpcServer, server)
 	raftTransport := &grpctransport.Transport{}
 	raftNode := raft.New(
 		raft.NodeID(*id),
 		peers,
 		raftTransport,
 	)
-	go raftNode.RequestVotes(ctx)
+
+	grpcServer := grpc.NewServer()
+	server := grpctransport.NewServer(raftNode)
+
+	raftpb.RegisterRaftServiceServer(grpcServer, server)
+
+	ctx := context.Background()
+	go raftNode.Start(ctx)
 
 	if err := grpcServer.Serve(listener); err != nil {
 		log.Fatalf("failed to serve: %v", err)
