@@ -23,7 +23,10 @@ type Raft struct {
 	nextIndex  map[NodeID]uint64
 	matchIndex map[NodeID]uint64
 
+	applied [][]byte
+
 	electionResetCh chan struct{}
+	applyCh         chan struct{}
 }
 
 func New(
@@ -43,6 +46,7 @@ func New(
 		matchIndex: make(map[NodeID]uint64),
 
 		electionResetCh: make(chan struct{}, 1),
+		applyCh:         make(chan struct{}, 1),
 	}
 }
 
@@ -60,6 +64,7 @@ func (s State) String() string {
 }
 
 func (r *Raft) Start(ctx context.Context) {
+	go r.runApplyLoop(ctx)
 	r.runElectionTimer(ctx)
 }
 
@@ -181,6 +186,7 @@ func (r *Raft) advanceCommitIndexLocked() {
 
 		if count >= majority {
 			r.commitIndex = index
+			r.signalApply()
 
 			fmt.Printf(
 				"node=%s commitIndex=%d term=%d\n",

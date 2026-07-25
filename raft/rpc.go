@@ -238,6 +238,8 @@ func (r *Raft) HandleAppendEntries(
 		} else {
 			r.commitIndex = lastNewIndex
 		}
+
+		r.signalApply()
 	}
 
 	term := r.currentTerm
