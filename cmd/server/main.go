@@ -65,8 +65,10 @@ func main() {
 
 	grpcServer := grpc.NewServer()
 	server := grpctransport.NewServer(raftNode)
+	kvServer := grpctransport.NewKVServer(raftNode, store, peers)
 
 	raftpb.RegisterRaftServiceServer(grpcServer, server)
+	raftpb.RegisterKVServiceServer(grpcServer, kvServer)
 
 	ctx := context.Background()
 	go raftNode.Start(ctx)
