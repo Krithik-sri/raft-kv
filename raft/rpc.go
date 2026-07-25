@@ -76,11 +76,13 @@ func (r *Raft) HandleRequestVote(
 	req RequestVoteRequest,
 ) RequestVoteResponse {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if req.Term < r.currentTerm {
+		term := r.currentTerm
+		r.mu.Unlock()
+
 		return RequestVoteResponse{
-			Term:        r.currentTerm,
+			Term:        term,
 			VoteGranted: false,
 		}
 	}
@@ -93,13 +95,54 @@ func (r *Raft) HandleRequestVote(
 
 	if r.votedFor == "" || r.votedFor == req.CandidateID {
 		r.votedFor = req.CandidateID
+		term := r.currentTerm
+		r.mu.Unlock()
+
+		r.resetElectionTimer()
+
 		return RequestVoteResponse{
-			Term:        r.currentTerm,
+			Term:        term,
 			VoteGranted: true,
 		}
 	}
+
+	term := r.currentTerm
+	r.mu.Unlock()
+
 	return RequestVoteResponse{
-		Term:        r.currentTerm,
+		Term:        term,
 		VoteGranted: false,
+	}
+}
+
+func (r *Raft) HandleAppendEntries(
+	req AppendEntriesRequest,
+) AppendEntriesResponse {
+	r.mu.Lock()
+
+	if req.Term < r.currentTerm {
+		term := r.currentTerm
+		r.mu.Unlock()
+
+		return AppendEntriesResponse{
+			Term:    term,
+			Success: false,
+		}
+	}
+
+	if req.Term > r.currentTerm {
+		r.currentTerm = req.Term
+		r.votedFor = ""
+	}
+
+	r.state = Follower
+	term := r.currentTerm
+	r.mu.Unlock()
+
+	r.resetElectionTimer()
+
+	return AppendEntriesResponse{
+		Term:    term,
+		Success: true,
 	}
 }

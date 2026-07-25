@@ -39,6 +39,32 @@ func (s *Server) RequestVote(
 	}, nil
 }
 
+func (s *Server) AppendEntries(
+	ctx context.Context,
+	req *raftpb.AppendEntriesRequest,
+) (*raftpb.AppendEntriesResponse, error) {
+
+	raftReq := raft.AppendEntriesRequest{
+		Term:         req.Term,
+		LeaderID:     raft.NodeID(req.LeaderId),
+		PrevLogIndex: req.PrevLogIndex,
+		PrevLogTerm:  req.PrevLogTerm,
+		LeaderCommit: req.LeaderCommit,
+	}
+
+	resp := s.node.HandleAppendEntries(raftReq)
+
+	fmt.Printf(
+		"received AppendEntries leader=%s term=%d\n",
+		req.LeaderId,
+		req.Term,
+	)
+	return &raftpb.AppendEntriesResponse{
+		Term:    resp.Term,
+		Success: resp.Success,
+	}, nil
+}
+
 func NewServer(node *raft.Raft) *Server {
 	return &Server{
 		node: node,

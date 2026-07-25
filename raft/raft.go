@@ -107,6 +107,13 @@ func (r *Raft) becomeFollower(term uint64) {
 	r.state = Follower
 }
 
+func (r *Raft) resetElectionTimer() {
+	select {
+	case r.electionResetCh <- struct{}{}:
+	default:
+	}
+}
+
 func (r *Raft) becomeLeader(term uint64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

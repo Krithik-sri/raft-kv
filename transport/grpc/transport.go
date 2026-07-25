@@ -43,3 +43,37 @@ func (t *Transport) RequestVote(
 
 	return response, nil
 }
+
+func (t *Transport) AppendEntries(
+	ctx context.Context,
+	peer raft.Peer,
+	req raft.AppendEntriesRequest,
+) (raft.AppendEntriesResponse, error) {
+	pbReq := &raftpb.AppendEntriesRequest{
+		Term: req.Term,
+		LeaderId: string(req.LeaderID),
+		PrevLogIndex: req.PrevLogIndex,
+		PrevLogTerm: req.PrevLogTerm,
+		LeaderCommit: req.LeaderCommit,
+	}
+
+	client, err := NewClient(peer.Address)
+
+	if err != nil {
+		return raft.AppendEntriesResponse{}, err
+	}
+
+	defer client.Close()
+	pbResp, err := client.AppendEntries(ctx, pbReq)
+
+	if err != nil {
+		return raft.AppendEntriesResponse{}, err
+	}
+
+	response := raft.AppendEntriesResponse {
+		Term: pbResp.Term,
+		Success: pbResp.Success,
+	}
+
+	return response, nil
+}

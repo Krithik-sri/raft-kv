@@ -40,3 +40,10 @@ func (c *Client) RequestVote(
 ) (*raftpb.RequestVoteResponse, error) {
 	return c.client.RequestVote(ctx, req)
 }
+
+func (c *Client) AppendEntries(
+	ctx context.Context,
+	req *raftpb.AppendEntriesRequest,
+) (*raftpb.AppendEntriesResponse, error) {
+	return c.client.AppendEntries(ctx, req)
+}

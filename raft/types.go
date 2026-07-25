@@ -31,3 +31,17 @@ type RequestVoteResponse struct {
 	Term        uint64
 	VoteGranted bool
 }
+
+type AppendEntriesRequest struct {
+	Term         uint64
+	LeaderID     NodeID
+	PrevLogIndex uint64
+	PrevLogTerm  uint64
+	Entries      []LogEntry
+	LeaderCommit uint64
+}
+
+type AppendEntriesResponse struct {
+	Term    uint64
+	Success bool
+}
