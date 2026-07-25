@@ -64,7 +64,7 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 				if currentVotes >= majority {
 					if r.becomeLeader(req.Term) {
 						fmt.Printf("node=%s became leader term=%d\n", r.id, req.Term)
-						go r.runHeartbeats(ctx, req.Term)
+						go r.runReplication(ctx, req.Term)
 					}
 				}
 			}
@@ -74,42 +74,56 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 	wg.Wait()
 }
 
-func (r *Raft) sendHeartbeats(ctx context.Context, term uint64) {
-	req := r.makeAppendEntriesRequest()
+func (r *Raft) replicateTo(ctx context.Context, peer Peer, term uint64) {
+	req := r.makeAppendEntriesRequestFor(peer.ID)
 
+	resp, err := r.transport.AppendEntries(ctx, peer, req)
+
+	if err != nil {
+		fmt.Printf("failed replicating to %s: %v\n", peer.ID, err)
+		return
+	}
+
+	if resp.Term > term {
+		fmt.Printf(
+			"node=%s stepping down peer=%s term=%d\n",
+			r.id,
+			peer.ID,
+			resp.Term,
+		)
+		r.becomeFollower(resp.Term)
+		return
+	}
+
+	if !r.isLeaderForTerm(term) {
+		return
+	}
+
+	if resp.Success {
+		r.advancePeerProgress(peer.ID, req.PrevLogIndex+uint64(len(req.Entries)))
+		return
+	}
+
+	r.retreatNextIndex(peer.ID)
+}
+
+func (r *Raft) replicateToAll(ctx context.Context, term uint64) {
 	for _, peer := range r.peers {
-		go func(peer Peer) {
-			resp, err := r.transport.AppendEntries(ctx, peer, req)
-
-			if err != nil {
-				fmt.Printf("failed sending heartbeat to %s: %v\n", peer.ID, err)
-				return
-			}
-
-			if resp.Term > term {
-				fmt.Printf(
-					"node=%s stepping down peer=%s term=%d\n",
-					r.id,
-					peer.ID,
-					resp.Term,
-				)
-				r.becomeFollower(resp.Term)
-			}
-		}(peer)
+		go r.replicateTo(ctx, peer, term)
 	}
 }
 
-func (r *Raft) runHeartbeats(ctx context.Context, term uint64) {
+func (r *Raft) runReplication(ctx context.Context, term uint64) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
 	for {
 		if !r.isLeaderForTerm(term) {
-			fmt.Printf("node=%s stopping heartbeats term=%d\n", r.id, term)
+			fmt.Printf("node=%s stopping replication term=%d\n", r.id, term)
 			return
 		}
 
-		r.sendHeartbeats(ctx, term)
+		r.replicateToAll(ctx, term)
 
 		select {
 		case <-ticker.C:
