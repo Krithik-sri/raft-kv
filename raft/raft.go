@@ -16,6 +16,7 @@ type Raft struct {
 
 	currentTerm uint64
 	votedFor    NodeID
+	leaderID    NodeID
 	log         []LogEntry
 
 	commitIndex uint64
@@ -23,6 +24,8 @@ type Raft struct {
 
 	nextIndex  map[NodeID]uint64
 	matchIndex map[NodeID]uint64
+
+	waiters map[uint64]chan applyOutcome
 
 	electionResetCh chan struct{}
 	applyCh         chan struct{}
@@ -45,6 +48,7 @@ func New(
 
 		nextIndex:  make(map[NodeID]uint64),
 		matchIndex: make(map[NodeID]uint64),
+		waiters:    make(map[uint64]chan applyOutcome),
 
 		electionResetCh: make(chan struct{}, 1),
 		applyCh:         make(chan struct{}, 1),
@@ -80,6 +84,7 @@ func (r *Raft) becomeCandidate() bool {
 	r.state = Candidate
 	r.currentTerm++
 	r.votedFor = r.id
+	r.leaderID = ""
 	return true
 }
 
@@ -140,12 +145,11 @@ func (r *Raft) Submit(command []byte) (uint64, uint64, bool) {
 		return 0, 0, false
 	}
 
-	r.log = append(r.log, LogEntry{Term: r.currentTerm, Command: command})
-	index := uint64(len(r.log) - 1)
+	index, term := r.appendCommandLocked(command)
 
-	fmt.Printf("node=%s submitted index=%d term=%d\n", r.id, index, r.currentTerm)
+	fmt.Printf("node=%s submitted index=%d term=%d\n", r.id, index, term)
 
-	return index, r.currentTerm, true
+	return index, term, true
 }
 
 func (r *Raft) advancePeerProgress(peerID NodeID, matchIndex uint64) {
@@ -242,6 +246,7 @@ func (r *Raft) becomeLeader(term uint64) bool {
 	}
 
 	r.state = Leader
+	r.leaderID = r.id
 
 	lastLogIndex, _ := r.lastLogIndexAndTermLocked()
 	for _, peer := range r.peers {

@@ -34,7 +34,15 @@ func (r *Raft) applyCommitted() {
 			continue
 		}
 
-		if _, err := r.stateMachine.Apply(entry.Command); err != nil {
+		result, err := r.stateMachine.Apply(entry.Command)
+
+		r.notifyWaiter(index, applyOutcome{
+			term:   entry.Term,
+			result: result,
+			err:    err,
+		})
+
+		if err != nil {
 			fmt.Printf(
 				"node=%s apply failed index=%d: %v\n",
 				r.id,

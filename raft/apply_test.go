@@ -23,7 +23,7 @@ func (m *recordingStateMachine) Apply(command []byte) ([]byte, error) {
 	}
 
 	m.commands = append(m.commands, string(command))
-	return nil, nil
+	return []byte("ok:" + string(command)), nil
 }
 
 func (m *recordingStateMachine) snapshot() []string {

@@ -202,6 +202,7 @@ func (r *Raft) HandleAppendEntries(
 	}
 
 	r.state = Follower
+	r.leaderID = req.LeaderID
 
 	if req.PrevLogIndex >= uint64(len(r.log)) ||
 		r.log[req.PrevLogIndex].Term != req.PrevLogTerm {
