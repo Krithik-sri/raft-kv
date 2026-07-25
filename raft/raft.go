@@ -63,11 +63,15 @@ func (r *Raft) Start(ctx context.Context) {
 func (r *Raft) becomeCandidate() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.state == Leader {
+		return false
+	}
+
 	r.state = Candidate
 	r.currentTerm++
 	r.votedFor = r.id
 	return true
-
 }
 
 func (r *Raft) getStateAndTerm() (State, uint64) {
