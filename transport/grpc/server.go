@@ -49,6 +49,7 @@ func (s *Server) AppendEntries(
 		LeaderID:     raft.NodeID(req.LeaderId),
 		PrevLogIndex: req.PrevLogIndex,
 		PrevLogTerm:  req.PrevLogTerm,
+		Entries:      fromProtoEntries(req.Entries),
 		LeaderCommit: req.LeaderCommit,
 	}
 

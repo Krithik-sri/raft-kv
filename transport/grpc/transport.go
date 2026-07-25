@@ -11,6 +11,36 @@ type Transport struct{}
 
 var _ raft.Transport = (*Transport)(nil)
 
+func toProtoEntries(entries []raft.LogEntry) []*raftpb.LogEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	pbEntries := make([]*raftpb.LogEntry, len(entries))
+	for i, entry := range entries {
+		pbEntries[i] = &raftpb.LogEntry{
+			Term:    entry.Term,
+			Command: entry.Command,
+		}
+	}
+	return pbEntries
+}
+
+func fromProtoEntries(pbEntries []*raftpb.LogEntry) []raft.LogEntry {
+	if len(pbEntries) == 0 {
+		return nil
+	}
+
+	entries := make([]raft.LogEntry, len(pbEntries))
+	for i, pbEntry := range pbEntries {
+		entries[i] = raft.LogEntry{
+			Term:    pbEntry.Term,
+			Command: pbEntry.Command,
+		}
+	}
+	return entries
+}
+
 func (t *Transport) RequestVote(
 	ctx context.Context,
 	peer raft.Peer,
@@ -50,10 +80,11 @@ func (t *Transport) AppendEntries(
 	req raft.AppendEntriesRequest,
 ) (raft.AppendEntriesResponse, error) {
 	pbReq := &raftpb.AppendEntriesRequest{
-		Term: req.Term,
-		LeaderId: string(req.LeaderID),
+		Term:         req.Term,
+		LeaderId:     string(req.LeaderID),
 		PrevLogIndex: req.PrevLogIndex,
-		PrevLogTerm: req.PrevLogTerm,
+		PrevLogTerm:  req.PrevLogTerm,
+		Entries:      toProtoEntries(req.Entries),
 		LeaderCommit: req.LeaderCommit,
 	}
 
@@ -70,8 +101,8 @@ func (t *Transport) AppendEntries(
 		return raft.AppendEntriesResponse{}, err
 	}
 
-	response := raft.AppendEntriesResponse {
-		Term: pbResp.Term,
+	response := raft.AppendEntriesResponse{
+		Term:    pbResp.Term,
 		Success: pbResp.Success,
 	}
 

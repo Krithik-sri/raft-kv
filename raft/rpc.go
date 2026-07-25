@@ -188,6 +188,44 @@ func (r *Raft) HandleAppendEntries(
 	}
 
 	r.state = Follower
+
+	if req.PrevLogIndex >= uint64(len(r.log)) ||
+		r.log[req.PrevLogIndex].Term != req.PrevLogTerm {
+		term := r.currentTerm
+		r.mu.Unlock()
+
+		r.resetElectionTimer()
+
+		return AppendEntriesResponse{
+			Term:    term,
+			Success: false,
+		}
+	}
+
+	for i, entry := range req.Entries {
+		index := req.PrevLogIndex + 1 + uint64(i)
+
+		if index >= uint64(len(r.log)) {
+			r.log = append(r.log, req.Entries[i:]...)
+			break
+		}
+
+		if r.log[index].Term != entry.Term {
+			r.log = append(r.log[:index], req.Entries[i:]...)
+			break
+		}
+	}
+
+	if req.LeaderCommit > r.commitIndex {
+		lastNewIndex := req.PrevLogIndex + uint64(len(req.Entries))
+
+		if req.LeaderCommit < lastNewIndex {
+			r.commitIndex = req.LeaderCommit
+		} else {
+			r.commitIndex = lastNewIndex
+		}
+	}
+
 	term := r.currentTerm
 	r.mu.Unlock()
 
