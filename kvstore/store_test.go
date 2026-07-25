@@ -143,3 +143,66 @@ func TestApplyRejectsBadInput(t *testing.T) {
 		t.Error("Apply accepted an unknown op")
 	}
 }
+
+func TestDuplicateRequestIsNotReapplied(t *testing.T) {
+	s := New()
+
+	cmd := Command{Op: OpPut, Key: "n", Value: "first", ClientID: "c1", Seq: 1}
+	applyCommand(t, s, cmd)
+
+	applyCommand(t, s, Command{Op: OpPut, Key: "n", Value: "second", ClientID: "c1", Seq: 1})
+
+	if value, _ := s.Get("n"); value != "first" {
+		t.Errorf("value = %q, want \"first\" (retry must not reapply)", value)
+	}
+}
+
+func TestDuplicateCompareAndSwapReturnsOriginalResult(t *testing.T) {
+	s := New()
+
+	applyCommand(t, s, Command{Op: OpPut, Key: "n", Value: "1"})
+
+	swap := Command{Op: OpCAS, Key: "n", Expected: "1", Value: "2", ClientID: "c1", Seq: 7}
+
+	first := applyCommand(t, s, swap)
+	if !first.Swapped {
+		t.Fatal("first compare-and-swap should have succeeded")
+	}
+
+	retry := applyCommand(t, s, swap)
+	if !retry.Swapped {
+		t.Error("retry reported Swapped=false; the client would wrongly believe it lost the race")
+	}
+
+	if value, _ := s.Get("n"); value != "2" {
+		t.Errorf("value = %q, want \"2\"", value)
+	}
+}
+
+func TestSequenceNumbersAreTrackedPerClient(t *testing.T) {
+	s := New()
+
+	applyCommand(t, s, Command{Op: OpPut, Key: "k", Value: "a", ClientID: "c1", Seq: 1})
+	applyCommand(t, s, Command{Op: OpPut, Key: "k", Value: "b", ClientID: "c2", Seq: 1})
+
+	if value, _ := s.Get("k"); value != "b" {
+		t.Errorf("value = %q, want \"b\" (different clients must not dedup each other)", value)
+	}
+
+	applyCommand(t, s, Command{Op: OpPut, Key: "k", Value: "c", ClientID: "c1", Seq: 2})
+
+	if value, _ := s.Get("k"); value != "c" {
+		t.Errorf("value = %q, want \"c\" (a higher seq must apply)", value)
+	}
+}
+
+func TestCommandsWithoutClientIDAreNeverDeduped(t *testing.T) {
+	s := New()
+
+	applyCommand(t, s, Command{Op: OpPut, Key: "k", Value: "a"})
+	applyCommand(t, s, Command{Op: OpPut, Key: "k", Value: "b"})
+
+	if value, _ := s.Get("k"); value != "b" {
+		t.Errorf("value = %q, want \"b\"", value)
+	}
+}

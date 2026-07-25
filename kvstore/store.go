@@ -19,6 +19,8 @@ type Command struct {
 	Key      string `json:"key"`
 	Value    string `json:"value,omitempty"`
 	Expected string `json:"expected,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
+	Seq      uint64 `json:"seq,omitempty"`
 }
 
 type Result struct {
@@ -39,13 +41,22 @@ func DecodeResult(data []byte) (Result, error) {
 	return result, err
 }
 
+type session struct {
+	seq    uint64
+	result Result
+}
+
 type Store struct {
-	mu   sync.RWMutex
-	data map[string]string
+	mu       sync.RWMutex
+	data     map[string]string
+	sessions map[string]session
 }
 
 func New() *Store {
-	return &Store{data: make(map[string]string)}
+	return &Store{
+		data:     make(map[string]string),
+		sessions: make(map[string]session),
+	}
 }
 
 func (s *Store) Get(key string) (string, bool) {
@@ -71,24 +82,35 @@ func (s *Store) Apply(command []byte) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if cmd.ClientID != "" {
+		if previous, ok := s.sessions[cmd.ClientID]; ok && cmd.Seq <= previous.seq {
+			return json.Marshal(previous.result)
+		}
+	}
+
+	var result Result
+
 	switch cmd.Op {
 	case OpPut:
 		s.data[cmd.Key] = cmd.Value
-		return json.Marshal(Result{})
 
 	case OpDelete:
 		delete(s.data, cmd.Key)
-		return json.Marshal(Result{})
 
 	case OpCAS:
 		current, ok := s.data[cmd.Key]
 		if (ok && current == cmd.Expected) || (!ok && cmd.Expected == "") {
 			s.data[cmd.Key] = cmd.Value
-			return json.Marshal(Result{Swapped: true})
+			result.Swapped = true
 		}
-		return json.Marshal(Result{})
 
 	default:
 		return nil, fmt.Errorf("unknown op %q", cmd.Op)
 	}
+
+	if cmd.ClientID != "" {
+		s.sessions[cmd.ClientID] = session{seq: cmd.Seq, result: result}
+	}
+
+	return json.Marshal(result)
 }
