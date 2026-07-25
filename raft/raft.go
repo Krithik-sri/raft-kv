@@ -92,6 +92,26 @@ func (r *Raft) makeRequestVoteRequest() RequestVoteRequest {
 	}
 }
 
+func (r *Raft) makeAppendEntriesRequest() AppendEntriesRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return AppendEntriesRequest{
+		Term:         r.currentTerm,
+		LeaderID:     r.id,
+		PrevLogIndex: 0,
+		PrevLogTerm:  0,
+		LeaderCommit: r.commitIndex,
+	}
+}
+
+func (r *Raft) isLeaderForTerm(term uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.state == Leader && r.currentTerm == term
+}
+
 func (r *Raft) isCandidateTerm(term uint64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
