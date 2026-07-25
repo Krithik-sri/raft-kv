@@ -254,5 +254,7 @@ func (r *Raft) becomeLeader(term uint64) bool {
 		r.matchIndex[peer.ID] = 0
 	}
 
+	r.log = append(r.log, LogEntry{Term: r.currentTerm})
+
 	return true
 }

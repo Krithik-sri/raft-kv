@@ -174,7 +174,7 @@ func TestClusterReplicatesAndApplies(t *testing.T) {
 		}
 	}
 
-	waitForLogConvergence(t, nodes, commands+1, 10*time.Second)
+	waitForLogConvergence(t, nodes, commands+2, 10*time.Second)
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -217,7 +217,7 @@ func TestClusterRepairsDivergentFollower(t *testing.T) {
 		}
 	}
 
-	waitForLogConvergence(t, nodes, commands+1, 10*time.Second)
+	waitForLogConvergence(t, nodes, commands+2, 10*time.Second)
 
 	var follower *Raft
 	for _, node := range nodes {
@@ -228,12 +228,12 @@ func TestClusterRepairsDivergentFollower(t *testing.T) {
 	}
 
 	follower.mu.Lock()
-	follower.log[commands] = LogEntry{Term: 99, Command: []byte("bogus")}
+	follower.log[len(follower.log)-1] = LogEntry{Term: 99, Command: []byte("bogus")}
 	follower.mu.Unlock()
 
 	if logsMatch(snapshotLog(leader), snapshotLog(follower)) {
 		t.Fatal("follower log was not corrupted, test proves nothing")
 	}
 
-	waitForLogConvergence(t, nodes, commands+1, 10*time.Second)
+	waitForLogConvergence(t, nodes, commands+2, 10*time.Second)
 }
