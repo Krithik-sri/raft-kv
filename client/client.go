@@ -2,9 +2,12 @@ package client
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	raftpb "github.com/krithik-sri/raft-kv/proto"
@@ -21,10 +24,20 @@ var ErrNoLeader = errors.New("no leader reachable")
 
 type Client struct {
 	addresses []string
+	id        string
+	seq       atomic.Uint64
 
 	mu     sync.Mutex
 	leader string
 	conns  map[string]*grpc.ClientConn
+}
+
+func newClientID() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 func New(addresses []string) (*Client, error) {
@@ -32,10 +45,20 @@ func New(addresses []string) (*Client, error) {
 		return nil, errors.New("at least one cluster address is required")
 	}
 
+	id, err := newClientID()
+	if err != nil {
+		return nil, fmt.Errorf("generate client id: %w", err)
+	}
+
 	return &Client{
 		addresses: addresses,
+		id:        id,
 		conns:     make(map[string]*grpc.ClientConn),
 	}, nil
+}
+
+func (c *Client) ID() string {
+	return c.id
 }
 
 func (c *Client) Close() error {
@@ -186,8 +209,15 @@ func (c *Client) Get(ctx context.Context, key string) (string, bool, error) {
 }
 
 func (c *Client) Put(ctx context.Context, key, value string) error {
+	seq := c.seq.Add(1)
+
 	return c.do(ctx, func(service raftpb.KVServiceClient) (*raftpb.LeaderRedirect, error) {
-		resp, err := service.Put(ctx, &raftpb.PutRequest{Key: key, Value: value})
+		resp, err := service.Put(ctx, &raftpb.PutRequest{
+			Key:      key,
+			Value:    value,
+			ClientId: c.id,
+			Seq:      seq,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -196,8 +226,14 @@ func (c *Client) Put(ctx context.Context, key, value string) error {
 }
 
 func (c *Client) Delete(ctx context.Context, key string) error {
+	seq := c.seq.Add(1)
+
 	return c.do(ctx, func(service raftpb.KVServiceClient) (*raftpb.LeaderRedirect, error) {
-		resp, err := service.Delete(ctx, &raftpb.DeleteRequest{Key: key})
+		resp, err := service.Delete(ctx, &raftpb.DeleteRequest{
+			Key:      key,
+			ClientId: c.id,
+			Seq:      seq,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -210,12 +246,15 @@ func (c *Client) CompareAndSwap(
 	key, expected, value string,
 ) (bool, error) {
 	var swapped bool
+	seq := c.seq.Add(1)
 
 	err := c.do(ctx, func(service raftpb.KVServiceClient) (*raftpb.LeaderRedirect, error) {
 		resp, err := service.CompareAndSwap(ctx, &raftpb.CompareAndSwapRequest{
 			Key:      key,
 			Expected: expected,
 			Value:    value,
+			ClientId: c.id,
+			Seq:      seq,
 		})
 		if err != nil {
 			return nil, err

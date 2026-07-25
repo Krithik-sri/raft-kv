@@ -92,9 +92,11 @@ func (s *KVServer) Put(
 	req *raftpb.PutRequest,
 ) (*raftpb.PutResponse, error) {
 	_, redirect, err := s.apply(ctx, kvstore.Command{
-		Op:    kvstore.OpPut,
-		Key:   req.Key,
-		Value: req.Value,
+		Op:       kvstore.OpPut,
+		Key:      req.Key,
+		Value:    req.Value,
+		ClientID: req.ClientId,
+		Seq:      req.Seq,
 	})
 	if err != nil {
 		return nil, err
@@ -108,8 +110,10 @@ func (s *KVServer) Delete(
 	req *raftpb.DeleteRequest,
 ) (*raftpb.DeleteResponse, error) {
 	_, redirect, err := s.apply(ctx, kvstore.Command{
-		Op:  kvstore.OpDelete,
-		Key: req.Key,
+		Op:       kvstore.OpDelete,
+		Key:      req.Key,
+		ClientID: req.ClientId,
+		Seq:      req.Seq,
 	})
 	if err != nil {
 		return nil, err
@@ -127,6 +131,8 @@ func (s *KVServer) CompareAndSwap(
 		Key:      req.Key,
 		Expected: req.Expected,
 		Value:    req.Value,
+		ClientID: req.ClientId,
+		Seq:      req.Seq,
 	})
 	if err != nil {
 		return nil, err
