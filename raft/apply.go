@@ -14,17 +14,40 @@ func (r *Raft) signalApply() {
 
 func (r *Raft) applyCommitted() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
-	for r.lastApplied < r.commitIndex {
-		r.lastApplied++
-		entry := r.log[r.lastApplied]
-		r.applied = append(r.applied, entry.Command)
+	if r.lastApplied >= r.commitIndex {
+		r.mu.Unlock()
+		return
+	}
+
+	first := r.lastApplied + 1
+	pending := make([]LogEntry, r.commitIndex-r.lastApplied)
+	copy(pending, r.log[first:r.commitIndex+1])
+	r.lastApplied = r.commitIndex
+
+	r.mu.Unlock()
+
+	for offset, entry := range pending {
+		index := first + uint64(offset)
+
+		if len(entry.Command) == 0 {
+			continue
+		}
+
+		if _, err := r.stateMachine.Apply(entry.Command); err != nil {
+			fmt.Printf(
+				"node=%s apply failed index=%d: %v\n",
+				r.id,
+				index,
+				err,
+			)
+			continue
+		}
 
 		fmt.Printf(
 			"node=%s applied index=%d term=%d\n",
 			r.id,
-			r.lastApplied,
+			index,
 			entry.Term,
 		)
 	}

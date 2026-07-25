@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/krithik-sri/raft-kv/kvstore"
 	raftpb "github.com/krithik-sri/raft-kv/proto"
 	"github.com/krithik-sri/raft-kv/raft"
 	grpctransport "github.com/krithik-sri/raft-kv/transport/grpc"
@@ -54,10 +55,12 @@ func main() {
 	}
 
 	raftTransport := &grpctransport.Transport{}
+	store := kvstore.New()
 	raftNode := raft.New(
 		raft.NodeID(*id),
 		peers,
 		raftTransport,
+		store,
 	)
 
 	grpcServer := grpc.NewServer()

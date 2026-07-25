@@ -7,11 +7,12 @@ import (
 )
 
 type Raft struct {
-	mu        sync.Mutex
-	id        NodeID
-	state     State
-	peers     []Peer
-	transport Transport
+	mu           sync.Mutex
+	id           NodeID
+	state        State
+	peers        []Peer
+	transport    Transport
+	stateMachine StateMachine
 
 	currentTerm uint64
 	votedFor    NodeID
@@ -23,8 +24,6 @@ type Raft struct {
 	nextIndex  map[NodeID]uint64
 	matchIndex map[NodeID]uint64
 
-	applied [][]byte
-
 	electionResetCh chan struct{}
 	applyCh         chan struct{}
 }
@@ -33,12 +32,14 @@ func New(
 	id NodeID,
 	peers []Peer,
 	transport Transport,
+	stateMachine StateMachine,
 ) *Raft {
 	return &Raft{
-		id:        id,
-		state:     Follower,
-		peers:     peers,
-		transport: transport,
+		id:           id,
+		state:        Follower,
+		peers:        peers,
+		transport:    transport,
+		stateMachine: stateMachine,
 
 		log: []LogEntry{{}},
 

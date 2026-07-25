@@ -3,7 +3,7 @@ package raft
 import "testing"
 
 func newTestRaft() *Raft {
-	r := New("n1", nil, nil)
+	r := New("n1", nil, nil, &recordingStateMachine{})
 	r.currentTerm = 1
 	r.log = []LogEntry{
 		{},

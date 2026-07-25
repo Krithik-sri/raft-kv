@@ -1,12 +1,49 @@
 package raft
 
 import (
-	"bytes"
+	"errors"
+	"sync"
 	"testing"
 )
 
-func newTestApplier(commands []string, commitIndex uint64) *Raft {
-	r := New("n1", nil, nil)
+type recordingStateMachine struct {
+	mu       sync.Mutex
+	commands []string
+	failOn   string
+}
+
+var _ StateMachine = (*recordingStateMachine)(nil)
+
+func (m *recordingStateMachine) Apply(command []byte) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.failOn != "" && string(command) == m.failOn {
+		return nil, errors.New("apply rejected")
+	}
+
+	m.commands = append(m.commands, string(command))
+	return nil, nil
+}
+
+func (m *recordingStateMachine) snapshot() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := make([]string, len(m.commands))
+	copy(out, m.commands)
+	return out
+}
+
+func (m *recordingStateMachine) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.commands)
+}
+
+func newTestApplier(commands []string, commitIndex uint64) (*Raft, *recordingStateMachine) {
+	machine := &recordingStateMachine{}
+	r := New("n1", nil, nil, machine)
 	r.currentTerm = 1
 
 	entries := []LogEntry{{}}
@@ -16,15 +53,19 @@ func newTestApplier(commands []string, commitIndex uint64) *Raft {
 	r.log = entries
 	r.commitIndex = commitIndex
 
-	return r
+	return r, machine
 }
 
-func appliedStrings(applied [][]byte) []string {
-	out := make([]string, len(applied))
-	for i, command := range applied {
-		out[i] = string(command)
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
 	}
-	return out
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestApplyCommitted(t *testing.T) {
@@ -56,18 +97,12 @@ func TestApplyCommitted(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := newTestApplier(tt.commands, tt.commitIndex)
+			r, machine := newTestApplier(tt.commands, tt.commitIndex)
 
 			r.applyCommitted()
 
-			got := appliedStrings(r.applied)
-			if len(got) != len(tt.wantApplied) {
-				t.Fatalf("applied = %v, want %v", got, tt.wantApplied)
-			}
-			for i := range got {
-				if got[i] != tt.wantApplied[i] {
-					t.Fatalf("applied = %v, want %v", got, tt.wantApplied)
-				}
+			if got := machine.snapshot(); !equalStrings(got, tt.wantApplied) {
+				t.Errorf("applied = %v, want %v", got, tt.wantApplied)
 			}
 
 			if r.lastApplied != tt.commitIndex {
@@ -78,30 +113,41 @@ func TestApplyCommitted(t *testing.T) {
 }
 
 func TestApplyCommittedIsIdempotent(t *testing.T) {
-	r := newTestApplier([]string{"a", "b"}, 2)
+	r, machine := newTestApplier([]string{"a", "b"}, 2)
 
 	r.applyCommitted()
 	r.applyCommitted()
 
-	if len(r.applied) != 2 {
-		t.Fatalf("applied %d entries after two passes, want 2", len(r.applied))
+	if machine.count() != 2 {
+		t.Fatalf("applied %d commands after two passes, want 2", machine.count())
 	}
 }
 
 func TestApplyCommittedResumesAfterCommitAdvances(t *testing.T) {
-	r := newTestApplier([]string{"a", "b", "c"}, 1)
+	r, machine := newTestApplier([]string{"a", "b", "c"}, 1)
 
 	r.applyCommitted()
 	r.commitIndex = 3
 	r.applyCommitted()
 
-	want := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
-	if len(r.applied) != len(want) {
-		t.Fatalf("applied = %v, want %v", appliedStrings(r.applied), appliedStrings(want))
+	want := []string{"a", "b", "c"}
+	if got := machine.snapshot(); !equalStrings(got, want) {
+		t.Fatalf("applied = %v, want %v", got, want)
 	}
-	for i := range want {
-		if !bytes.Equal(r.applied[i], want[i]) {
-			t.Fatalf("applied = %v, want %v", appliedStrings(r.applied), appliedStrings(want))
-		}
+}
+
+func TestApplyCommittedSkipsFailedEntry(t *testing.T) {
+	r, machine := newTestApplier([]string{"a", "bad", "c"}, 3)
+	machine.failOn = "bad"
+
+	r.applyCommitted()
+
+	want := []string{"a", "c"}
+	if got := machine.snapshot(); !equalStrings(got, want) {
+		t.Fatalf("applied = %v, want %v", got, want)
+	}
+
+	if r.lastApplied != 3 {
+		t.Errorf("lastApplied = %d, want 3", r.lastApplied)
 	}
 }

@@ -60,7 +60,7 @@ func (t *memTransport) AppendEntries(
 	return node.HandleAppendEntries(req), nil
 }
 
-func startCluster(t *testing.T, size int) ([]*Raft, context.CancelFunc) {
+func startCluster(t *testing.T, size int) ([]*Raft, []*recordingStateMachine, context.CancelFunc) {
 	t.Helper()
 
 	transport := newMemTransport()
@@ -71,6 +71,7 @@ func startCluster(t *testing.T, size int) ([]*Raft, context.CancelFunc) {
 	}
 
 	nodes := make([]*Raft, size)
+	machines := make([]*recordingStateMachine, size)
 	for i, id := range ids {
 		var peers []Peer
 		for _, other := range ids {
@@ -78,7 +79,8 @@ func startCluster(t *testing.T, size int) ([]*Raft, context.CancelFunc) {
 				peers = append(peers, Peer{ID: other, Address: string(other)})
 			}
 		}
-		nodes[i] = New(id, peers, transport)
+		machines[i] = &recordingStateMachine{}
+		nodes[i] = New(id, peers, transport, machines[i])
 		transport.register(id, nodes[i])
 	}
 
@@ -87,7 +89,7 @@ func startCluster(t *testing.T, size int) ([]*Raft, context.CancelFunc) {
 		go node.Start(ctx)
 	}
 
-	return nodes, cancel
+	return nodes, machines, cancel
 }
 
 func snapshotLog(r *Raft) []LogEntry {
@@ -97,12 +99,6 @@ func snapshotLog(r *Raft) []LogEntry {
 	out := make([]LogEntry, len(r.log))
 	copy(out, r.log)
 	return out
-}
-
-func appliedCount(r *Raft) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.applied)
 }
 
 func waitForLeader(t *testing.T, nodes []*Raft, timeout time.Duration) *Raft {
@@ -166,7 +162,7 @@ func waitForLogConvergence(t *testing.T, nodes []*Raft, wantLen int, timeout tim
 }
 
 func TestClusterReplicatesAndApplies(t *testing.T) {
-	nodes, cancel := startCluster(t, 3)
+	nodes, machines, cancel := startCluster(t, 3)
 	defer cancel()
 
 	leader := waitForLeader(t, nodes, 5*time.Second)
@@ -183,25 +179,33 @@ func TestClusterReplicatesAndApplies(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		done := true
-		for _, node := range nodes {
-			if appliedCount(node) != commands {
+		for _, machine := range machines {
+			if machine.count() != commands {
 				done = false
 				break
 			}
 		}
 		if done {
-			return
+			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	for _, node := range nodes {
-		t.Errorf("node=%s applied %d, want %d", node.id, appliedCount(node), commands)
+	want := make([]string, commands)
+	for i := range want {
+		want[i] = fmt.Sprintf("cmd-%d", i)
+	}
+
+	for i, machine := range machines {
+		if got := machine.snapshot(); !equalStrings(got, want) {
+			t.Errorf("node=%s applied %d commands, want %d in order",
+				nodes[i].id, len(got), commands)
+		}
 	}
 }
 
 func TestClusterRepairsDivergentFollower(t *testing.T) {
-	nodes, cancel := startCluster(t, 3)
+	nodes, _, cancel := startCluster(t, 3)
 	defer cancel()
 
 	leader := waitForLeader(t, nodes, 5*time.Second)
