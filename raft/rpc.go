@@ -140,7 +140,12 @@ func (r *Raft) HandleRequestVote(
 		r.votedFor = ""
 	}
 
-	if r.votedFor == "" || r.votedFor == req.CandidateID {
+	lastLogIndex, lastLogTerm := r.lastLogIndexAndTermLocked()
+
+	logUpToDate := req.LastLogTerm > lastLogTerm ||
+		(req.LastLogTerm == lastLogTerm && req.LastLogIndex >= lastLogIndex)
+
+	if logUpToDate && (r.votedFor == "" || r.votedFor == req.CandidateID) {
 		r.votedFor = req.CandidateID
 		term := r.currentTerm
 		r.mu.Unlock()

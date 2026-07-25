@@ -36,6 +36,8 @@ func New(
 		peers:     peers,
 		transport: transport,
 
+		log: []LogEntry{{}},
+
 		nextIndex:  make(map[NodeID]uint64),
 		matchIndex: make(map[NodeID]uint64),
 
@@ -80,15 +82,22 @@ func (r *Raft) getStateAndTerm() (State, uint64) {
 	return r.state, r.currentTerm
 }
 
+func (r *Raft) lastLogIndexAndTermLocked() (uint64, uint64) {
+	lastIndex := uint64(len(r.log) - 1)
+	return lastIndex, r.log[lastIndex].Term
+}
+
 func (r *Raft) makeRequestVoteRequest() RequestVoteRequest {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	lastLogIndex, lastLogTerm := r.lastLogIndexAndTermLocked()
+
 	return RequestVoteRequest{
 		Term:         r.currentTerm,
 		CandidateID:  r.id,
-		LastLogIndex: 0,
-		LastLogTerm:  0,
+		LastLogIndex: lastLogIndex,
+		LastLogTerm:  lastLogTerm,
 	}
 }
 
