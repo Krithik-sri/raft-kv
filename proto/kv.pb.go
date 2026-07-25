@@ -181,6 +181,8 @@ type PutRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	ClientId      string                 `protobuf:"bytes,3,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Seq           uint64                 `protobuf:"varint,4,opt,name=seq,proto3" json:"seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -227,6 +229,20 @@ func (x *PutRequest) GetValue() string {
 		return x.Value
 	}
 	return ""
+}
+
+func (x *PutRequest) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *PutRequest) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
 }
 
 type PutResponse struct {
@@ -276,6 +292,8 @@ func (x *PutResponse) GetRedirect() *LeaderRedirect {
 type DeleteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	ClientId      string                 `protobuf:"bytes,2,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Seq           uint64                 `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -315,6 +333,20 @@ func (x *DeleteRequest) GetKey() string {
 		return x.Key
 	}
 	return ""
+}
+
+func (x *DeleteRequest) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *DeleteRequest) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
 }
 
 type DeleteResponse struct {
@@ -366,6 +398,8 @@ type CompareAndSwapRequest struct {
 	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	Expected      string                 `protobuf:"bytes,2,opt,name=expected,proto3" json:"expected,omitempty"`
 	Value         string                 `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	ClientId      string                 `protobuf:"bytes,4,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Seq           uint64                 `protobuf:"varint,5,opt,name=seq,proto3" json:"seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -419,6 +453,20 @@ func (x *CompareAndSwapRequest) GetValue() string {
 		return x.Value
 	}
 	return ""
+}
+
+func (x *CompareAndSwapRequest) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *CompareAndSwapRequest) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
 }
 
 type CompareAndSwapResponse struct {
@@ -487,21 +535,27 @@ const file_proto_kv_proto_rawDesc = "" +
 	"\vGetResponse\x120\n" +
 	"\bredirect\x18\x01 \x01(\v2\x14.raft.LeaderRedirectR\bredirect\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12\x14\n" +
-	"\x05found\x18\x03 \x01(\bR\x05found\"4\n" +
+	"\x05found\x18\x03 \x01(\bR\x05found\"c\n" +
 	"\n" +
 	"PutRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value\"?\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\x12\x1b\n" +
+	"\tclient_id\x18\x03 \x01(\tR\bclientId\x12\x10\n" +
+	"\x03seq\x18\x04 \x01(\x04R\x03seq\"?\n" +
 	"\vPutResponse\x120\n" +
-	"\bredirect\x18\x01 \x01(\v2\x14.raft.LeaderRedirectR\bredirect\"!\n" +
+	"\bredirect\x18\x01 \x01(\v2\x14.raft.LeaderRedirectR\bredirect\"P\n" +
 	"\rDeleteRequest\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\"B\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1b\n" +
+	"\tclient_id\x18\x02 \x01(\tR\bclientId\x12\x10\n" +
+	"\x03seq\x18\x03 \x01(\x04R\x03seq\"B\n" +
 	"\x0eDeleteResponse\x120\n" +
-	"\bredirect\x18\x01 \x01(\v2\x14.raft.LeaderRedirectR\bredirect\"[\n" +
+	"\bredirect\x18\x01 \x01(\v2\x14.raft.LeaderRedirectR\bredirect\"\x8a\x01\n" +
 	"\x15CompareAndSwapRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1a\n" +
 	"\bexpected\x18\x02 \x01(\tR\bexpected\x12\x14\n" +
-	"\x05value\x18\x03 \x01(\tR\x05value\"d\n" +
+	"\x05value\x18\x03 \x01(\tR\x05value\x12\x1b\n" +
+	"\tclient_id\x18\x04 \x01(\tR\bclientId\x12\x10\n" +
+	"\x03seq\x18\x05 \x01(\x04R\x03seq\"d\n" +
 	"\x16CompareAndSwapResponse\x120\n" +
 	"\bredirect\x18\x01 \x01(\v2\x14.raft.LeaderRedirectR\bredirect\x12\x18\n" +
 	"\aswapped\x18\x02 \x01(\bR\aswapped2\xe5\x01\n" +
