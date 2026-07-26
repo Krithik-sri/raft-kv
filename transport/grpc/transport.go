@@ -81,6 +81,7 @@ func (t *Transport) RequestVote(
 		CandidateId:  string(req.CandidateID),
 		LastLogIndex: req.LastLogIndex,
 		LastLogTerm:  req.LastLogTerm,
+		PreVote:      req.PreVote,
 	}
 	client, err := NewClient(peer.Address)
 

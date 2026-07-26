@@ -25,6 +25,7 @@ type RequestVoteRequest struct {
 	CandidateID  NodeID
 	LastLogIndex uint64
 	LastLogTerm  uint64
+	PreVote      bool
 }
 
 type RequestVoteResponse struct {

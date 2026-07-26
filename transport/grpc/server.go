@@ -24,6 +24,7 @@ func (s *Server) RequestVote(
 		CandidateID:  raft.NodeID(req.CandidateId),
 		LastLogIndex: req.LastLogIndex,
 		LastLogTerm:  req.LastLogTerm,
+		PreVote:      req.PreVote,
 	}
 
 	resp := s.node.HandleRequestVote(raftReq)
