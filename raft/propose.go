@@ -55,6 +55,13 @@ func (r *Raft) LeaderHint() (NodeID, bool) {
 	return r.leaderID, r.state == Leader
 }
 
+func (r *Raft) signalReplicate() {
+	select {
+	case r.replicateCh <- struct{}{}:
+	default:
+	}
+}
+
 func (r *Raft) appendCommandLocked(command []byte) (uint64, uint64, error) {
 	entry := LogEntry{Term: r.currentTerm, Command: command}
 
@@ -63,6 +70,8 @@ func (r *Raft) appendCommandLocked(command []byte) (uint64, uint64, error) {
 	}
 
 	r.log = append(r.log, entry)
+	r.signalReplicate()
+
 	return r.lastLogIndexLocked(), r.currentTerm, nil
 }
 

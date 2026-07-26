@@ -2,14 +2,54 @@ package grpctransport
 
 import (
 	"context"
+	"sync"
 
 	raftpb "github.com/krithik-sri/raft-kv/proto"
 	"github.com/krithik-sri/raft-kv/raft"
 )
 
-type Transport struct{}
+type Transport struct {
+	mu      sync.Mutex
+	clients map[string]*Client
+}
 
 var _ raft.Transport = (*Transport)(nil)
+
+func (t *Transport) clientFor(address string) (*Client, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.clients == nil {
+		t.clients = make(map[string]*Client)
+	}
+
+	if client, ok := t.clients[address]; ok {
+		return client, nil
+	}
+
+	client, err := NewClient(address)
+	if err != nil {
+		return nil, err
+	}
+
+	t.clients[address] = client
+	return client, nil
+}
+
+func (t *Transport) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	var firstErr error
+	for _, client := range t.clients {
+		if err := client.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	t.clients = nil
+
+	return firstErr
+}
 
 func toProtoEntries(entries []raft.LogEntry) []*raftpb.LogEntry {
 	if len(entries) == 0 {
@@ -39,13 +79,10 @@ func (t *Transport) InstallSnapshot(
 		Data:              req.Data,
 	}
 
-	client, err := NewClient(peer.Address)
-
+	client, err := t.clientFor(peer.Address)
 	if err != nil {
 		return raft.InstallSnapshotResponse{}, err
 	}
-
-	defer client.Close()
 
 	pbResp, err := client.InstallSnapshot(ctx, pbReq)
 
@@ -83,13 +120,10 @@ func (t *Transport) RequestVote(
 		LastLogTerm:  req.LastLogTerm,
 		PreVote:      req.PreVote,
 	}
-	client, err := NewClient(peer.Address)
-
+	client, err := t.clientFor(peer.Address)
 	if err != nil {
 		return raft.RequestVoteResponse{}, err
 	}
-
-	defer client.Close()
 
 	pbResp, err := client.RequestVote(ctx, pbReq)
 
@@ -119,13 +153,10 @@ func (t *Transport) AppendEntries(
 		LeaderCommit: req.LeaderCommit,
 	}
 
-	client, err := NewClient(peer.Address)
-
+	client, err := t.clientFor(peer.Address)
 	if err != nil {
 		return raft.AppendEntriesResponse{}, err
 	}
-
-	defer client.Close()
 	pbResp, err := client.AppendEntries(ctx, pbReq)
 
 	if err != nil {

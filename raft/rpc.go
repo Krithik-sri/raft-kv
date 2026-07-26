@@ -135,6 +135,7 @@ func (r *Raft) runReplication(ctx context.Context, term uint64) {
 
 		select {
 		case <-ticker.C:
+		case <-r.replicateCh:
 		case <-ctx.Done():
 			return
 		}

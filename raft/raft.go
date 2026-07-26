@@ -37,6 +37,7 @@ type Raft struct {
 
 	electionResetCh chan struct{}
 	applyCh         chan struct{}
+	replicateCh     chan struct{}
 }
 
 func New(
@@ -67,6 +68,7 @@ func New(
 
 		electionResetCh: make(chan struct{}, 1),
 		applyCh:         make(chan struct{}, 1),
+		replicateCh:     make(chan struct{}, 1),
 	}
 
 	state, err := storage.Load()
