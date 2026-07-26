@@ -3,6 +3,7 @@ package raft
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 func (r *Raft) needsSnapshot(peerID NodeID) bool {
@@ -93,6 +94,7 @@ func (r *Raft) HandleInstallSnapshot(
 
 	r.state = Follower
 	r.leaderID = req.LeaderID
+	r.lastHeard = time.Now()
 
 	term := r.currentTerm
 

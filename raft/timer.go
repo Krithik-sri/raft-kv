@@ -28,13 +28,10 @@ func (r *Raft) runElectionTimer(ctx context.Context) {
 
 		select {
 		case <-timer.C:
-
-			if !r.becomeCandidate() {
-				continue
-			}
 			state, term := r.getStateAndTerm()
 			fmt.Printf("node=%s election timeout after=%s state=%s term=%d\n", r.id, timeout, state, term)
-			go r.RequestVotes(ctx)
+
+			go r.campaign(ctx)
 
 		case <-r.electionResetCh:
 			timer.Stop()

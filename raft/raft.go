@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type Raft struct {
@@ -19,6 +20,7 @@ type Raft struct {
 	currentTerm uint64
 	votedFor    NodeID
 	leaderID    NodeID
+	lastHeard   time.Time
 	log         []LogEntry
 
 	snapshotIndex     uint64
@@ -124,11 +126,11 @@ func (r *Raft) Start(ctx context.Context) {
 	r.runElectionTimer(ctx)
 }
 
-func (r *Raft) becomeCandidate() bool {
+func (r *Raft) becomeCandidate(expectedTerm uint64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.state == Leader {
+	if r.state == Leader || r.currentTerm != expectedTerm {
 		return false
 	}
 

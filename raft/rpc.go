@@ -141,6 +141,10 @@ func (r *Raft) runReplication(ctx context.Context, term uint64) {
 func (r *Raft) HandleRequestVote(
 	req RequestVoteRequest,
 ) RequestVoteResponse {
+	if req.PreVote {
+		return r.handlePreVote(req)
+	}
+
 	r.mu.Lock()
 
 	if req.Term < r.currentTerm {
@@ -192,6 +196,9 @@ func (r *Raft) HandleRequestVote(
 	if stepDown {
 		r.state = Follower
 	}
+	if granted {
+		r.lastHeard = time.Now()
+	}
 
 	r.mu.Unlock()
 
@@ -239,6 +246,7 @@ func (r *Raft) HandleAppendEntries(
 
 	r.state = Follower
 	r.leaderID = req.LeaderID
+	r.lastHeard = time.Now()
 
 	if prevTerm, ok := r.termAtLocked(req.PrevLogIndex); !ok || prevTerm != req.PrevLogTerm {
 		term := r.currentTerm
