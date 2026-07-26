@@ -75,6 +75,11 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 }
 
 func (r *Raft) replicateTo(ctx context.Context, peer Peer, term uint64) {
+	if r.needsSnapshot(peer.ID) {
+		r.sendSnapshot(ctx, peer, term)
+		return
+	}
+
 	req := r.makeAppendEntriesRequestFor(peer.ID)
 
 	resp, err := r.transport.AppendEntries(ctx, peer, req)

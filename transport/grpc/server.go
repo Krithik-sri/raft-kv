@@ -66,6 +66,28 @@ func (s *Server) AppendEntries(
 	}, nil
 }
 
+func (s *Server) InstallSnapshot(
+	ctx context.Context,
+	req *raftpb.InstallSnapshotRequest,
+) (*raftpb.InstallSnapshotResponse, error) {
+
+	resp := s.node.HandleInstallSnapshot(raft.InstallSnapshotRequest{
+		Term:              req.Term,
+		LeaderID:          raft.NodeID(req.LeaderId),
+		LastIncludedIndex: req.LastIncludedIndex,
+		LastIncludedTerm:  req.LastIncludedTerm,
+		Data:              req.Data,
+	})
+
+	fmt.Printf(
+		"received InstallSnapshot leader=%s index=%d\n",
+		req.LeaderId,
+		req.LastIncludedIndex,
+	)
+
+	return &raftpb.InstallSnapshotResponse{Term: resp.Term}, nil
+}
+
 func NewServer(node *raft.Raft) *Server {
 	return &Server{
 		node: node,

@@ -26,6 +26,36 @@ func toProtoEntries(entries []raft.LogEntry) []*raftpb.LogEntry {
 	return pbEntries
 }
 
+func (t *Transport) InstallSnapshot(
+	ctx context.Context,
+	peer raft.Peer,
+	req raft.InstallSnapshotRequest,
+) (raft.InstallSnapshotResponse, error) {
+	pbReq := &raftpb.InstallSnapshotRequest{
+		Term:              req.Term,
+		LeaderId:          string(req.LeaderID),
+		LastIncludedIndex: req.LastIncludedIndex,
+		LastIncludedTerm:  req.LastIncludedTerm,
+		Data:              req.Data,
+	}
+
+	client, err := NewClient(peer.Address)
+
+	if err != nil {
+		return raft.InstallSnapshotResponse{}, err
+	}
+
+	defer client.Close()
+
+	pbResp, err := client.InstallSnapshot(ctx, pbReq)
+
+	if err != nil {
+		return raft.InstallSnapshotResponse{}, err
+	}
+
+	return raft.InstallSnapshotResponse{Term: pbResp.Term}, nil
+}
+
 func fromProtoEntries(pbEntries []*raftpb.LogEntry) []raft.LogEntry {
 	if len(pbEntries) == 0 {
 		return nil

@@ -14,4 +14,10 @@ type Transport interface {
 		peer Peer,
 		req AppendEntriesRequest,
 	) (AppendEntriesResponse, error)
+
+	InstallSnapshot(
+		ctx context.Context,
+		peer Peer,
+		req InstallSnapshotRequest,
+	) (InstallSnapshotResponse, error)
 }

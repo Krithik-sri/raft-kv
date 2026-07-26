@@ -47,3 +47,10 @@ func (c *Client) AppendEntries(
 ) (*raftpb.AppendEntriesResponse, error) {
 	return c.client.AppendEntries(ctx, req)
 }
+
+func (c *Client) InstallSnapshot(
+	ctx context.Context,
+	req *raftpb.InstallSnapshotRequest,
+) (*raftpb.InstallSnapshotResponse, error) {
+	return c.client.InstallSnapshot(ctx, req)
+}

@@ -8,6 +8,7 @@ import (
 
 type Raft struct {
 	mu           sync.Mutex
+	applyMu      sync.Mutex
 	id           NodeID
 	state        State
 	peers        []Peer

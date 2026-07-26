@@ -45,3 +45,15 @@ type AppendEntriesResponse struct {
 	Term    uint64
 	Success bool
 }
+
+type InstallSnapshotRequest struct {
+	Term              uint64
+	LeaderID          NodeID
+	LastIncludedIndex uint64
+	LastIncludedTerm  uint64
+	Data              []byte
+}
+
+type InstallSnapshotResponse struct {
+	Term uint64
+}

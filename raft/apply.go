@@ -13,6 +13,9 @@ func (r *Raft) signalApply() {
 }
 
 func (r *Raft) applyCommitted() {
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
+
 	r.mu.Lock()
 
 	if r.lastApplied >= r.commitIndex {
