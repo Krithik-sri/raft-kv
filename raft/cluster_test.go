@@ -3,6 +3,7 @@ package raft
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"sync"
 	"testing"
 	"time"
@@ -42,17 +43,34 @@ func (s *memStorage) LoadSnapshot() ([]byte, bool, error) {
 	return s.snapshot, s.present, nil
 }
 
+type netStats struct {
+	delivered   int
+	dropped     int
+	duplicated  int
+	partitioned int
+}
+
 type memNetwork struct {
 	mu       sync.Mutex
 	nodes    map[NodeID]*Raft
-	blocked  map[NodeID]bool
+	group    map[NodeID]int
+	nextIsle int
 	installs int
+
+	dropRate      float64
+	duplicateRate float64
+	maxDelay      time.Duration
+
+	rng   *rand.Rand
+	stats netStats
 }
 
 func newMemNetwork() *memNetwork {
 	return &memNetwork{
-		nodes:   make(map[NodeID]*Raft),
-		blocked: make(map[NodeID]bool),
+		nodes:    make(map[NodeID]*Raft),
+		group:    make(map[NodeID]int),
+		nextIsle: 1,
+		rng:      rand.New(rand.NewPCG(1, 2)),
 	}
 }
 
@@ -65,13 +83,52 @@ func (n *memNetwork) register(id NodeID, node *Raft) {
 func (n *memNetwork) block(id NodeID) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.blocked[id] = true
+
+	n.group[id] = n.nextIsle
+	n.nextIsle++
 }
 
 func (n *memNetwork) unblock(id NodeID) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	delete(n.blocked, id)
+	n.group[id] = 0
+}
+
+func (n *memNetwork) partitionInto(groups ...[]NodeID) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	for i, group := range groups {
+		for _, id := range group {
+			n.group[id] = i + 1
+		}
+	}
+	n.nextIsle = len(groups) + 1
+}
+
+func (n *memNetwork) heal() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	for id := range n.group {
+		n.group[id] = 0
+	}
+	n.nextIsle = 1
+}
+
+func (n *memNetwork) setFaults(dropRate, duplicateRate float64, maxDelay time.Duration) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	n.dropRate = dropRate
+	n.duplicateRate = duplicateRate
+	n.maxDelay = maxDelay
+}
+
+func (n *memNetwork) snapshotStats() netStats {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.stats
 }
 
 func (n *memNetwork) installCount() int {
@@ -86,18 +143,51 @@ func (n *memNetwork) countInstall() {
 	n.installs++
 }
 
-func (n *memNetwork) route(from, to NodeID) (*Raft, error) {
+func (n *memNetwork) shouldDuplicate() bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.blocked[from] || n.blocked[to] {
-		return nil, fmt.Errorf("%s cannot reach %s", from, to)
+	if n.duplicateRate <= 0 || n.rng.Float64() >= n.duplicateRate {
+		return false
+	}
+
+	n.stats.duplicated++
+	return true
+}
+
+func (n *memNetwork) route(from, to NodeID) (*Raft, error) {
+	n.mu.Lock()
+
+	if n.group[from] != n.group[to] {
+		n.stats.partitioned++
+		n.mu.Unlock()
+		return nil, fmt.Errorf("%s is partitioned from %s", from, to)
+	}
+
+	if n.dropRate > 0 && n.rng.Float64() < n.dropRate {
+		n.stats.dropped++
+		n.mu.Unlock()
+		return nil, fmt.Errorf("message from %s to %s dropped", from, to)
+	}
+
+	var delay time.Duration
+	if n.maxDelay > 0 {
+		delay = time.Duration(n.rng.Int64N(int64(n.maxDelay)))
 	}
 
 	node, ok := n.nodes[to]
 	if !ok {
+		n.mu.Unlock()
 		return nil, fmt.Errorf("unknown peer %s", to)
 	}
+
+	n.stats.delivered++
+	n.mu.Unlock()
+
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+
 	return node, nil
 }
 
@@ -129,6 +219,11 @@ func (t *memTransport) AppendEntries(
 	if err != nil {
 		return AppendEntriesResponse{}, err
 	}
+
+	if t.net.shouldDuplicate() {
+		node.HandleAppendEntries(req)
+	}
+
 	return node.HandleAppendEntries(req), nil
 }
 
