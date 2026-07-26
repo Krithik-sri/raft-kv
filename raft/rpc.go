@@ -148,10 +148,14 @@ func (r *Raft) HandleRequestVote(
 		}
 	}
 
+	term := r.currentTerm
+	votedFor := r.votedFor
+	stepDown := false
+
 	if req.Term > r.currentTerm {
-		r.currentTerm = req.Term
-		r.state = Follower
-		r.votedFor = ""
+		term = req.Term
+		votedFor = ""
+		stepDown = true
 	}
 
 	lastLogIndex, lastLogTerm := r.lastLogIndexAndTermLocked()
@@ -159,25 +163,40 @@ func (r *Raft) HandleRequestVote(
 	logUpToDate := req.LastLogTerm > lastLogTerm ||
 		(req.LastLogTerm == lastLogTerm && req.LastLogIndex >= lastLogIndex)
 
-	if logUpToDate && (r.votedFor == "" || r.votedFor == req.CandidateID) {
-		r.votedFor = req.CandidateID
-		term := r.currentTerm
-		r.mu.Unlock()
+	granted := logUpToDate && (votedFor == "" || votedFor == req.CandidateID)
+	if granted {
+		votedFor = req.CandidateID
+	}
 
-		r.resetElectionTimer()
+	if term != r.currentTerm || votedFor != r.votedFor {
+		if err := r.storage.SaveState(term, votedFor); err != nil {
+			fmt.Printf("node=%s failed persisting vote: %v\n", r.id, err)
 
-		return RequestVoteResponse{
-			Term:        term,
-			VoteGranted: true,
+			current := r.currentTerm
+			r.mu.Unlock()
+
+			return RequestVoteResponse{
+				Term:        current,
+				VoteGranted: false,
+			}
 		}
 	}
 
-	term := r.currentTerm
+	r.currentTerm = term
+	r.votedFor = votedFor
+	if stepDown {
+		r.state = Follower
+	}
+
 	r.mu.Unlock()
+
+	if granted {
+		r.resetElectionTimer()
+	}
 
 	return RequestVoteResponse{
 		Term:        term,
-		VoteGranted: false,
+		VoteGranted: granted,
 	}
 }
 
@@ -197,6 +216,18 @@ func (r *Raft) HandleAppendEntries(
 	}
 
 	if req.Term > r.currentTerm {
+		if err := r.storage.SaveState(req.Term, ""); err != nil {
+			fmt.Printf("node=%s failed persisting term: %v\n", r.id, err)
+
+			current := r.currentTerm
+			r.mu.Unlock()
+
+			return AppendEntriesResponse{
+				Term:    current,
+				Success: false,
+			}
+		}
+
 		r.currentTerm = req.Term
 		r.votedFor = ""
 	}
@@ -217,17 +248,61 @@ func (r *Raft) HandleAppendEntries(
 		}
 	}
 
+	appendFrom := -1
+	truncateAt := uint64(0)
+
 	for i, entry := range req.Entries {
 		index := req.PrevLogIndex + 1 + uint64(i)
 
 		if index >= uint64(len(r.log)) {
-			r.log = append(r.log, req.Entries[i:]...)
+			appendFrom = i
 			break
 		}
 
 		if r.log[index].Term != entry.Term {
-			r.log = append(r.log[:index], req.Entries[i:]...)
+			appendFrom = i
+			truncateAt = index
 			break
+		}
+	}
+
+	if appendFrom >= 0 {
+		fresh := req.Entries[appendFrom:]
+
+		if truncateAt > 0 {
+			if err := r.storage.TruncateLog(truncateAt); err != nil {
+				fmt.Printf("node=%s failed persisting truncation: %v\n", r.id, err)
+
+				current := r.currentTerm
+				r.mu.Unlock()
+
+				r.resetElectionTimer()
+
+				return AppendEntriesResponse{
+					Term:    current,
+					Success: false,
+				}
+			}
+		}
+
+		if err := r.storage.AppendLog(fresh); err != nil {
+			fmt.Printf("node=%s failed persisting entries: %v\n", r.id, err)
+
+			current := r.currentTerm
+			r.mu.Unlock()
+
+			r.resetElectionTimer()
+
+			return AppendEntriesResponse{
+				Term:    current,
+				Success: false,
+			}
+		}
+
+		if truncateAt > 0 {
+			r.log = append(r.log[:truncateAt], fresh...)
+		} else {
+			r.log = append(r.log, fresh...)
 		}
 	}
 

@@ -3,6 +3,7 @@ package raft
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 var (
@@ -16,6 +17,33 @@ type applyOutcome struct {
 	err    error
 }
 
+type Status struct {
+	ID          NodeID
+	State       State
+	Term        uint64
+	VotedFor    NodeID
+	LeaderID    NodeID
+	LogLength   int
+	CommitIndex uint64
+	LastApplied uint64
+}
+
+func (r *Raft) Status() Status {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return Status{
+		ID:          r.id,
+		State:       r.state,
+		Term:        r.currentTerm,
+		VotedFor:    r.votedFor,
+		LeaderID:    r.leaderID,
+		LogLength:   len(r.log),
+		CommitIndex: r.commitIndex,
+		LastApplied: r.lastApplied,
+	}
+}
+
 func (r *Raft) LeaderHint() (NodeID, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -23,9 +51,15 @@ func (r *Raft) LeaderHint() (NodeID, bool) {
 	return r.leaderID, r.state == Leader
 }
 
-func (r *Raft) appendCommandLocked(command []byte) (uint64, uint64) {
-	r.log = append(r.log, LogEntry{Term: r.currentTerm, Command: command})
-	return uint64(len(r.log) - 1), r.currentTerm
+func (r *Raft) appendCommandLocked(command []byte) (uint64, uint64, error) {
+	entry := LogEntry{Term: r.currentTerm, Command: command}
+
+	if err := r.storage.AppendLog([]LogEntry{entry}); err != nil {
+		return 0, 0, err
+	}
+
+	r.log = append(r.log, entry)
+	return uint64(len(r.log) - 1), r.currentTerm, nil
 }
 
 func (r *Raft) clearWaiter(index uint64) {
@@ -56,7 +90,11 @@ func (r *Raft) Propose(ctx context.Context, command []byte) ([]byte, error) {
 		return nil, ErrNotLeader
 	}
 
-	index, term := r.appendCommandLocked(command)
+	index, term, err := r.appendCommandLocked(command)
+	if err != nil {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("persist command: %w", err)
+	}
 
 	waiter := make(chan applyOutcome, 1)
 	r.waiters[index] = waiter

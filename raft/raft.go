@@ -13,6 +13,7 @@ type Raft struct {
 	peers        []Peer
 	transport    Transport
 	stateMachine StateMachine
+	storage      Storage
 
 	currentTerm uint64
 	votedFor    NodeID
@@ -36,13 +37,19 @@ func New(
 	peers []Peer,
 	transport Transport,
 	stateMachine StateMachine,
-) *Raft {
-	return &Raft{
+	storage Storage,
+) (*Raft, error) {
+	if storage == nil {
+		storage = nopStorage{}
+	}
+
+	r := &Raft{
 		id:           id,
 		state:        Follower,
 		peers:        peers,
 		transport:    transport,
 		stateMachine: stateMachine,
+		storage:      storage,
 
 		log: []LogEntry{{}},
 
@@ -53,6 +60,27 @@ func New(
 		electionResetCh: make(chan struct{}, 1),
 		applyCh:         make(chan struct{}, 1),
 	}
+
+	state, err := storage.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load persistent state: %w", err)
+	}
+
+	r.currentTerm = state.CurrentTerm
+	r.votedFor = state.VotedFor
+	r.log = append(r.log, state.Log...)
+
+	if len(state.Log) > 0 {
+		fmt.Printf(
+			"node=%s recovered term=%d votedFor=%q entries=%d\n",
+			id,
+			r.currentTerm,
+			r.votedFor,
+			len(state.Log),
+		)
+	}
+
+	return r, nil
 }
 
 func (s State) String() string {
@@ -81,8 +109,15 @@ func (r *Raft) becomeCandidate() bool {
 		return false
 	}
 
+	term := r.currentTerm + 1
+
+	if err := r.storage.SaveState(term, r.id); err != nil {
+		fmt.Printf("node=%s failed persisting candidacy: %v\n", r.id, err)
+		return false
+	}
+
 	r.state = Candidate
-	r.currentTerm++
+	r.currentTerm = term
 	r.votedFor = r.id
 	r.leaderID = ""
 	return true
@@ -145,7 +180,11 @@ func (r *Raft) Submit(command []byte) (uint64, uint64, bool) {
 		return 0, 0, false
 	}
 
-	index, term := r.appendCommandLocked(command)
+	index, term, err := r.appendCommandLocked(command)
+	if err != nil {
+		fmt.Printf("node=%s failed persisting command: %v\n", r.id, err)
+		return 0, 0, false
+	}
 
 	fmt.Printf("node=%s submitted index=%d term=%d\n", r.id, index, term)
 
@@ -223,8 +262,12 @@ func (r *Raft) becomeFollower(term uint64) {
 	defer r.mu.Unlock()
 
 	if term > r.currentTerm {
-		r.currentTerm = term
-		r.votedFor = ""
+		if err := r.storage.SaveState(term, ""); err != nil {
+			fmt.Printf("node=%s failed persisting term=%d: %v\n", r.id, term, err)
+		} else {
+			r.currentTerm = term
+			r.votedFor = ""
+		}
 	}
 
 	r.state = Follower
@@ -245,6 +288,13 @@ func (r *Raft) becomeLeader(term uint64) bool {
 		return false
 	}
 
+	noop := LogEntry{Term: r.currentTerm}
+
+	if err := r.storage.AppendLog([]LogEntry{noop}); err != nil {
+		fmt.Printf("node=%s failed persisting leader no-op: %v\n", r.id, err)
+		return false
+	}
+
 	r.state = Leader
 	r.leaderID = r.id
 
@@ -254,7 +304,7 @@ func (r *Raft) becomeLeader(term uint64) bool {
 		r.matchIndex[peer.ID] = 0
 	}
 
-	r.log = append(r.log, LogEntry{Term: r.currentTerm})
+	r.log = append(r.log, noop)
 
 	return true
 }
