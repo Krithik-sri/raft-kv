@@ -18,6 +18,7 @@ const (
 	kindState    kind = "state"
 	kindAppend   kind = "append"
 	kindTruncate kind = "truncate"
+	kindCompact  kind = "compact"
 )
 
 type entry struct {
@@ -26,15 +27,18 @@ type entry struct {
 }
 
 type record struct {
-	Kind     kind    `json:"kind"`
-	Term     uint64  `json:"term,omitempty"`
-	VotedFor string  `json:"voted_for,omitempty"`
-	Entries  []entry `json:"entries,omitempty"`
-	Length   uint64  `json:"length,omitempty"`
+	Kind          kind    `json:"kind"`
+	Term          uint64  `json:"term,omitempty"`
+	VotedFor      string  `json:"voted_for,omitempty"`
+	Entries       []entry `json:"entries,omitempty"`
+	Length        uint64  `json:"length,omitempty"`
+	SnapshotIndex uint64  `json:"snapshot_index,omitempty"`
+	SnapshotTerm  uint64  `json:"snapshot_term,omitempty"`
 }
 
 type File struct {
 	mu   sync.Mutex
+	path string
 	file *os.File
 }
 
@@ -46,7 +50,34 @@ func Open(path string) (*File, error) {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 
-	return &File{file: file}, nil
+	return &File{path: path, file: file}, nil
+}
+
+func (s *File) snapshotPath() string {
+	return s.path + ".snapshot"
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+
+	file, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmp, path)
 }
 
 func (s *File) Close() error {
@@ -92,14 +123,9 @@ func (s *File) AppendLog(entries []raft.LogEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	encoded := make([]entry, len(entries))
-	for i, e := range entries {
-		encoded[i] = entry{Term: e.Term, Command: e.Command}
-	}
-
 	return s.writeRecord(record{
 		Kind:    kindAppend,
-		Entries: encoded,
+		Entries: encodeEntries(entries),
 	})
 }
 
@@ -111,6 +137,97 @@ func (s *File) TruncateLog(length uint64) error {
 		Kind:   kindTruncate,
 		Length: length,
 	})
+}
+
+func encodeEntries(entries []raft.LogEntry) []entry {
+	encoded := make([]entry, len(entries))
+	for i, e := range entries {
+		encoded[i] = entry{Term: e.Term, Command: e.Command}
+	}
+	return encoded
+}
+
+func (s *File) LoadSnapshot() ([]byte, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, err := os.ReadFile(s.snapshotPath())
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read snapshot: %w", err)
+	}
+
+	return data, true, nil
+}
+
+func (s *File) SaveSnapshot(
+	snapshot raft.Snapshot,
+	term uint64,
+	votedFor raft.NodeID,
+	retained []raft.LogEntry,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := writeFileAtomic(s.snapshotPath(), snapshot.Data); err != nil {
+		return fmt.Errorf("write snapshot: %w", err)
+	}
+
+	compacted := []record{
+		{
+			Kind:          kindCompact,
+			SnapshotIndex: snapshot.Index,
+			SnapshotTerm:  snapshot.Term,
+		},
+		{
+			Kind:     kindState,
+			Term:     term,
+			VotedFor: string(votedFor),
+		},
+	}
+
+	if len(retained) > 0 {
+		compacted = append(compacted, record{
+			Kind:    kindAppend,
+			Entries: encodeEntries(retained),
+		})
+	}
+
+	var buf []byte
+	for _, rec := range compacted {
+		payload, err := json.Marshal(rec)
+		if err != nil {
+			return fmt.Errorf("encode record: %w", err)
+		}
+
+		frame := make([]byte, 4+len(payload))
+		binary.BigEndian.PutUint32(frame[:4], uint32(len(payload)))
+		copy(frame[4:], payload)
+
+		buf = append(buf, frame...)
+	}
+
+	if err := s.file.Close(); err != nil {
+		return fmt.Errorf("close log before compaction: %w", err)
+	}
+
+	if err := writeFileAtomic(s.path, buf); err != nil {
+		return fmt.Errorf("rewrite log: %w", err)
+	}
+
+	file, err := os.OpenFile(s.path, os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("reopen log: %w", err)
+	}
+	s.file = file
+
+	if _, err := s.file.Seek(0, io.SeekEnd); err != nil {
+		return fmt.Errorf("seek to end: %w", err)
+	}
+
+	return nil
 }
 
 func (s *File) Load() (raft.PersistentState, error) {
@@ -154,11 +271,17 @@ func (s *File) Load() (raft.PersistentState, error) {
 			}
 
 		case kindTruncate:
-			if rec.Length == 0 {
+			keep := rec.Length - state.SnapshotIndex - 1
+			if rec.Length <= state.SnapshotIndex {
 				entries = nil
-			} else if rec.Length-1 < uint64(len(entries)) {
-				entries = entries[:rec.Length-1]
+			} else if keep < uint64(len(entries)) {
+				entries = entries[:keep]
 			}
+
+		case kindCompact:
+			state.SnapshotIndex = rec.SnapshotIndex
+			state.SnapshotTerm = rec.SnapshotTerm
+			entries = nil
 		}
 	}
 

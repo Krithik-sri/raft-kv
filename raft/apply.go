@@ -68,11 +68,74 @@ func (r *Raft) applyCommitted() {
 	}
 }
 
+func (r *Raft) maybeSnapshot() {
+	r.mu.Lock()
+
+	index := r.lastApplied
+	if index-r.snapshotIndex < r.snapshotThreshold {
+		r.mu.Unlock()
+		return
+	}
+
+	term, ok := r.termAtLocked(index)
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+
+	r.mu.Unlock()
+
+	data, err := r.stateMachine.Snapshot()
+	if err != nil {
+		fmt.Printf("node=%s snapshot failed: %v\n", r.id, err)
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if index <= r.snapshotIndex {
+		return
+	}
+
+	offset, ok := r.offsetLocked(index)
+	if !ok {
+		return
+	}
+
+	retained := make([]LogEntry, len(r.log)-offset-1)
+	copy(retained, r.log[offset+1:])
+
+	err = r.storage.SaveSnapshot(
+		Snapshot{Index: index, Term: term, Data: data},
+		r.currentTerm,
+		r.votedFor,
+		retained,
+	)
+	if err != nil {
+		fmt.Printf("node=%s persisting snapshot failed: %v\n", r.id, err)
+		return
+	}
+
+	r.log = append([]LogEntry{{Term: term}}, retained...)
+	r.snapshotIndex = index
+	r.snapshotTerm = term
+
+	fmt.Printf(
+		"node=%s snapshot index=%d term=%d retained=%d\n",
+		r.id,
+		index,
+		term,
+		len(retained),
+	)
+}
+
 func (r *Raft) runApplyLoop(ctx context.Context) {
 	for {
 		select {
 		case <-r.applyCh:
 			r.applyCommitted()
+			r.maybeSnapshot()
 		case <-ctx.Done():
 			return
 		}

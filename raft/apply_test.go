@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -24,6 +25,20 @@ func (m *recordingStateMachine) Apply(command []byte) ([]byte, error) {
 
 	m.commands = append(m.commands, string(command))
 	return []byte("ok:" + string(command)), nil
+}
+
+func (m *recordingStateMachine) Snapshot() ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return json.Marshal(m.commands)
+}
+
+func (m *recordingStateMachine) Restore(data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return json.Unmarshal(data, &m.commands)
 }
 
 func (m *recordingStateMachine) snapshot() []string {

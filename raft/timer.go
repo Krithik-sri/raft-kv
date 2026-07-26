@@ -13,6 +13,8 @@ const (
 	heartbeatInterval  = 50 * time.Millisecond
 )
 
+const defaultSnapshotThreshold = 100
+
 func randomElectionTimeout() time.Duration {
 	randomNumber := 150 + rand.IntN(151)
 

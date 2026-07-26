@@ -63,6 +63,16 @@ func (t *memTransport) AppendEntries(
 func startCluster(t *testing.T, size int) ([]*Raft, []*recordingStateMachine, context.CancelFunc) {
 	t.Helper()
 
+	return startClusterWithThreshold(t, size, 1<<40)
+}
+
+func startClusterWithThreshold(
+	t *testing.T,
+	size int,
+	threshold uint64,
+) ([]*Raft, []*recordingStateMachine, context.CancelFunc) {
+	t.Helper()
+
 	transport := newMemTransport()
 
 	ids := make([]NodeID, size)
@@ -85,6 +95,8 @@ func startCluster(t *testing.T, size int) ([]*Raft, []*recordingStateMachine, co
 		if err != nil {
 			t.Fatalf("New %s: %v", id, err)
 		}
+
+		node.snapshotThreshold = threshold
 
 		nodes[i] = node
 		transport.register(id, node)

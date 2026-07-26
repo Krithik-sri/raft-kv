@@ -1,8 +1,11 @@
 package storage
 
 import (
+	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/krithik-sri/raft-kv/kvstore"
 	"github.com/krithik-sri/raft-kv/raft"
@@ -126,5 +129,120 @@ func TestRaftStartsCleanWithoutPriorState(t *testing.T) {
 	status := node.Status()
 	if status.Term != 0 || status.VotedFor != "" || status.LogLength != 1 {
 		t.Errorf("fresh node status = %+v, want term 0, no vote, sentinel only", status)
+	}
+}
+
+func TestSnapshotSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raft.log")
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	machine := kvstore.New()
+	node, err := raft.New("n1", nil, nil, machine, store)
+	if err != nil {
+		t.Fatalf("raft.New: %v", err)
+	}
+
+	entries := make([]raft.LogEntry, 0, 120)
+	for i := 0; i < 120; i++ {
+		command, err := kvstore.EncodeCommand(kvstore.Command{
+			Op: kvstore.OpPut, Key: "k", Value: "v",
+			ClientID: "c1", Seq: uint64(i + 1),
+		})
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		entries = append(entries, raft.LogEntry{Term: 1, Command: command})
+	}
+
+	resp := node.HandleAppendEntries(raft.AppendEntriesRequest{
+		Term: 1, LeaderID: "n2", PrevLogIndex: 0, PrevLogTerm: 0,
+		Entries: entries, LeaderCommit: 120,
+	})
+	if !resp.Success {
+		t.Fatalf("AppendEntries rejected: %+v", resp)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go node.Start(ctx)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if node.Status().SnapshotIndex > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	before := node.Status()
+	cancel()
+
+	if before.SnapshotIndex == 0 {
+		store.Close()
+		t.Fatal("node never snapshotted")
+	}
+	store.Close()
+
+	recovered, store := newNode(t, path)
+	defer store.Close()
+
+	after := recovered.Status()
+	if after.SnapshotIndex != before.SnapshotIndex {
+		t.Errorf("SnapshotIndex = %d, want %d", after.SnapshotIndex, before.SnapshotIndex)
+	}
+	if after.LastLogIndex != before.LastLogIndex {
+		t.Errorf("LastLogIndex = %d, want %d", after.LastLogIndex, before.LastLogIndex)
+	}
+	if after.LastApplied != before.SnapshotIndex {
+		t.Errorf("LastApplied = %d, want %d", after.LastApplied, before.SnapshotIndex)
+	}
+}
+
+func TestSnapshotRestoresDedupSessions(t *testing.T) {
+	machine := kvstore.New()
+
+	for i := 1; i <= 3; i++ {
+		command, err := kvstore.EncodeCommand(kvstore.Command{
+			Op: kvstore.OpPut, Key: "k", Value: fmt.Sprintf("v%d", i),
+			ClientID: "c1", Seq: uint64(i),
+		})
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		if _, err := machine.Apply(command); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+	}
+
+	image, err := machine.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	restored := kvstore.New()
+	if err := restored.Restore(image); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	if value, _ := restored.Get("k"); value != "v3" {
+		t.Errorf("restored value = %q, want \"v3\"", value)
+	}
+
+	replay, err := kvstore.EncodeCommand(kvstore.Command{
+		Op: kvstore.OpPut, Key: "k", Value: "REPLAYED",
+		ClientID: "c1", Seq: 2,
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if _, err := restored.Apply(replay); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if value, _ := restored.Get("k"); value != "v3" {
+		t.Errorf("value = %q after replaying seq 2; snapshot lost the dedup sessions", value)
 	}
 }
