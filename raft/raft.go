@@ -20,8 +20,9 @@ type Raft struct {
 	leaderID    NodeID
 	log         []LogEntry
 
-	snapshotIndex uint64
-	snapshotTerm  uint64
+	snapshotIndex     uint64
+	snapshotTerm      uint64
+	snapshotThreshold uint64
 
 	commitIndex uint64
 	lastApplied uint64
@@ -54,7 +55,8 @@ func New(
 		stateMachine: stateMachine,
 		storage:      storage,
 
-		log: []LogEntry{{}},
+		log:               []LogEntry{{}},
+		snapshotThreshold: defaultSnapshotThreshold,
 
 		nextIndex:  make(map[NodeID]uint64),
 		matchIndex: make(map[NodeID]uint64),
@@ -71,14 +73,31 @@ func New(
 
 	r.currentTerm = state.CurrentTerm
 	r.votedFor = state.VotedFor
+	r.snapshotIndex = state.SnapshotIndex
+	r.snapshotTerm = state.SnapshotTerm
+	r.commitIndex = state.SnapshotIndex
+	r.lastApplied = state.SnapshotIndex
+
+	r.log = []LogEntry{{Term: state.SnapshotTerm}}
 	r.log = append(r.log, state.Log...)
 
-	if len(state.Log) > 0 {
+	data, ok, err := storage.LoadSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("load snapshot: %w", err)
+	}
+	if ok {
+		if err := stateMachine.Restore(data); err != nil {
+			return nil, fmt.Errorf("restore snapshot: %w", err)
+		}
+	}
+
+	if state.SnapshotIndex > 0 || len(state.Log) > 0 {
 		fmt.Printf(
-			"node=%s recovered term=%d votedFor=%q entries=%d\n",
+			"node=%s recovered term=%d votedFor=%q snapshot=%d entries=%d\n",
 			id,
 			r.currentTerm,
 			r.votedFor,
+			r.snapshotIndex,
 			len(state.Log),
 		)
 	}

@@ -42,8 +42,13 @@ func DecodeResult(data []byte) (Result, error) {
 }
 
 type session struct {
-	seq    uint64
-	result Result
+	Seq    uint64 `json:"seq"`
+	Result Result `json:"result"`
+}
+
+type snapshot struct {
+	Data     map[string]string  `json:"data"`
+	Sessions map[string]session `json:"sessions"`
 }
 
 type Store struct {
@@ -83,8 +88,8 @@ func (s *Store) Apply(command []byte) ([]byte, error) {
 	defer s.mu.Unlock()
 
 	if cmd.ClientID != "" {
-		if previous, ok := s.sessions[cmd.ClientID]; ok && cmd.Seq <= previous.seq {
-			return json.Marshal(previous.result)
+		if previous, ok := s.sessions[cmd.ClientID]; ok && cmd.Seq <= previous.Seq {
+			return json.Marshal(previous.Result)
 		}
 	}
 
@@ -109,8 +114,49 @@ func (s *Store) Apply(command []byte) ([]byte, error) {
 	}
 
 	if cmd.ClientID != "" {
-		s.sessions[cmd.ClientID] = session{seq: cmd.Seq, result: result}
+		s.sessions[cmd.ClientID] = session{Seq: cmd.Seq, Result: result}
 	}
 
 	return json.Marshal(result)
+}
+
+func (s *Store) Snapshot() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	image := snapshot{
+		Data:     make(map[string]string, len(s.data)),
+		Sessions: make(map[string]session, len(s.sessions)),
+	}
+
+	for key, value := range s.data {
+		image.Data[key] = value
+	}
+	for client, tracked := range s.sessions {
+		image.Sessions[client] = tracked
+	}
+
+	return json.Marshal(image)
+}
+
+func (s *Store) Restore(data []byte) error {
+	var image snapshot
+	if err := json.Unmarshal(data, &image); err != nil {
+		return fmt.Errorf("decode snapshot: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data = image.Data
+	if s.data == nil {
+		s.data = make(map[string]string)
+	}
+
+	s.sessions = image.Sessions
+	if s.sessions == nil {
+		s.sessions = make(map[string]session)
+	}
+
+	return nil
 }
