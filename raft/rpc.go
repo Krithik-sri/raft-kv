@@ -74,7 +74,31 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 	wg.Wait()
 }
 
+func (r *Raft) beginReplication(peerID NodeID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.replicating[peerID] {
+		return false
+	}
+
+	r.replicating[peerID] = true
+	return true
+}
+
+func (r *Raft) endReplication(peerID NodeID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	delete(r.replicating, peerID)
+}
+
 func (r *Raft) replicateTo(ctx context.Context, peer Peer, term uint64) {
+	if !r.beginReplication(peer.ID) {
+		return
+	}
+	defer r.endReplication(peer.ID)
+
 	if r.needsSnapshot(peer.ID) {
 		r.sendSnapshot(ctx, peer, term)
 		return

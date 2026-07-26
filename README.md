@@ -125,7 +125,7 @@ committed entries the first time a duplicate `AppendEntries` shows up late.
 ## Testing
 
 ```bash
-go test ./...                                          # 64 tests
+go test ./...                                          # 66 tests
 powershell -File scripts/crash-test.ps1                # kill -9, repeatedly
 powershell -File scripts/chaos-sweep.ps1 -Seeds 20     # invariant sweep
 go test ./raft/ -run TestChaos -chaos.duration=30m     # soak
@@ -176,47 +176,54 @@ the shape rather than the absolute values.
 
 ```
 nodes   writers     writes/s          p50          p95          p99   failed
-3       8              405.8     18.101ms     33.677ms     39.232ms        0
-5       8              400.8     17.911ms     36.888ms     42.118ms        0
-7       8              369.3     18.694ms     36.429ms     47.361ms        0
+3       8              254.5     29.012ms      46.19ms     57.822ms        0
+5       8              248.7     29.902ms     46.253ms     60.164ms        0
+7       8              242.5     30.326ms      48.57ms     58.264ms        0
 
 failover: leader death to the next successful write
 nodes   trials            mean          min          max
-3       1                219ms        219ms        219ms
-5       2                217ms        214ms        221ms
-7       3                234ms        211ms        267ms
+3       1                420ms        420ms        420ms
+5       2                265ms        218ms        312ms
+7       3                264ms        219ms        309ms
 ```
 
 ```bash
 go run ./cmd/bench --sizes 3,5,7 --writers 8 --duration 15s
 ```
 
-**Growing the cluster costs almost nothing.** 406 to 369 writes/s going from three nodes to
+**Growing the cluster costs almost nothing.** 254 to 242 writes/s going from three nodes to
 seven. A majority of seven is four, the extra peers are replicated to in parallel, and the
-leader waits on the fastest majority either way. The p99 creeping from 39ms to 47ms is the
-real cost: more nodes, more chances one of them is having a moment.
+leader waits on the fastest majority either way.
 
-**Failover lands around 220ms** regardless of size, which is just the election timeout
-(150-300ms randomised) doing its job. Nothing clever, and it doesn't need to be.
+**Failover lands around 250ms**, which is just the randomised election timeout (150-300ms)
+doing its job. Nothing clever, and it doesn't need to be.
 
 **The first benchmark run was embarrassing.** 159 writes/s, identical at every cluster size,
 p50 of 49.98ms. That is not a coincidence: the heartbeat interval is 50ms. Writes were being
-appended to the log and then sitting there doing nothing until the replication ticker
-happened to come round. Every write paid an average of 25ms of pure waiting. The fix is a
-buffered channel that `Propose` pokes so the replication loop wakes immediately instead of on
-the tick, which took about ten lines and roughly doubled throughput.
+appended to the log and then sitting there until the replication ticker happened to come
+round, so every write paid an average of 25ms of pure waiting. The fix was a buffered channel
+that `Propose` pokes so replication wakes immediately rather than on the tick. Ten lines, 159
+to 406 writes/s.
 
-Worth saying plainly: I would not have found that by reading the code. It only showed up
-because the number was suspiciously round.
+**Then the chaos tests started failing.** Two seeds out of twelve, applied logs diverging
+between nodes. I assumed I'd merely exposed something old, so I reverted the change and reran
+at matched write volume: clean, three for three. I had broken it.
 
-**Connection pooling was less exciting.** The Raft transport used to dial and close a gRPC
-connection per RPC (roughly eighty a second at 50ms heartbeats across four peers), which
-looked like an obvious win. Caching one connection per peer moved mean throughput inside the
-noise band, but it cut run-to-run variance a lot: three runs went from 231/241/331 to
-250/255/257. Fewer connections, more predictable latency, no throughput story. Kept it
-anyway, because eighty connections a second to achieve nothing is a bad look.
+The 50ms ticker had been quietly enforcing something I never noticed: at most one
+`AppendEntries` in flight per follower at a time. Waking replication on every proposal
+removed that, and concurrent requests to the same follower started racing. The fix is a
+per-peer in-flight flag, so a proposal still wakes replication instantly but a peer that is
+already mid-request doesn't get a second one. Plus per-RPC timeouts, so a peer that stops
+answering releases its slot instead of blocking replication to itself forever.
 
-**p50 of 18ms is mostly disk.** A write is `fsync` on the leader, then `fsync` on each
+That costs pipelining: 406 back down to 254. Still 1.6x the ticker-bound baseline, and it
+passes 19 chaos seeds including the two that reliably failed before. I would rather have 254
+that is correct.
+
+Whoever wrote that 50ms ticker did me a favour by accident, which is a slightly humbling thing
+to discover about yourself.
+
+**p50 of 29ms is mostly disk.** A write is `fsync` on the leader, then `fsync` on each
 follower before it acknowledges, and the leader can't commit until a majority have done that.
 Two serial disk flushes on consumer hardware is basically the whole number. Batching multiple
 pending commands into one `fsync` is the obvious next win and is not implemented.

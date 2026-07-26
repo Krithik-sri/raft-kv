@@ -23,8 +23,8 @@ func TestSnapshotTrimsLogAndKeepsBoundary(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		done := true
-		for _, node := range nodes {
-			if node.Status().SnapshotIndex == 0 {
+		for i, node := range nodes {
+			if node.Status().SnapshotIndex == 0 || machines[i].count() != commands {
 				done = false
 				break
 			}

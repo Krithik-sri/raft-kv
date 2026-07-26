@@ -54,9 +54,43 @@ func TestClusterToleratesDroppedMessages(t *testing.T) {
 	if !waitForApplied(t, machines, 20, 20*time.Second) {
 		t.Fatalf("cluster did not converge under 30%% drops: %+v", network.snapshotStats())
 	}
+}
+
+func TestFaultInjectorDropsEverything(t *testing.T) {
+	nodes, _, network, cancel := startClusterWithThreshold(t, 3, 1<<40)
+	defer cancel()
+
+	network.setFaults(1.0, 0, 0)
+
+	time.Sleep(2 * time.Second)
 
 	if stats := network.snapshotStats(); stats.dropped == 0 {
-		t.Error("no messages were actually dropped; the fault injector did nothing")
+		t.Fatal("a drop rate of 1.0 dropped nothing; the injector is not wired up")
+	}
+
+	for _, node := range nodes {
+		if state, _ := node.getStateAndTerm(); state == Leader {
+			t.Errorf("node=%s won an election with every message dropped", node.id)
+		}
+	}
+}
+
+func TestFaultInjectorDuplicatesEverything(t *testing.T) {
+	nodes, machines, network, cancel := startClusterWithThreshold(t, 3, 1<<40)
+	defer cancel()
+
+	leader := waitForLeader(t, nodes, 15*time.Second)
+	network.setFaults(0, 1.0, 0)
+
+	submitN(t, leader, "dup", 20)
+
+	if !waitForApplied(t, machines, 20, 20*time.Second) {
+		t.Fatalf("cluster did not converge with every message duplicated: %+v",
+			network.snapshotStats())
+	}
+
+	if stats := network.snapshotStats(); stats.duplicated == 0 {
+		t.Fatal("a duplicate rate of 1.0 duplicated nothing")
 	}
 }
 
@@ -85,10 +119,6 @@ func TestClusterToleratesDuplicatedMessages(t *testing.T) {
 
 	if !waitForApplied(t, machines, 20, 20*time.Second) {
 		t.Fatalf("cluster did not converge under duplication: %+v", network.snapshotStats())
-	}
-
-	if stats := network.snapshotStats(); stats.duplicated == 0 {
-		t.Error("no messages were duplicated; the fault injector did nothing")
 	}
 
 	for i, machine := range machines {
