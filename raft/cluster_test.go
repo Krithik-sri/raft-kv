@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -324,15 +325,9 @@ func waitForLeader(t *testing.T, nodes []*Raft, timeout time.Duration) *Raft {
 }
 
 func logsMatch(a, b []LogEntry) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Term != b[i].Term || string(a[i].Command) != string(b[i].Command) {
-			return false
-		}
-	}
-	return true
+	return slices.EqualFunc(a, b, func(x, y LogEntry) bool {
+		return x.Term == y.Term && string(x.Command) == string(y.Command)
+	})
 }
 
 func waitForLogConvergence(t *testing.T, nodes []*Raft, wantLen int, timeout time.Duration) {
@@ -370,7 +365,7 @@ func TestClusterReplicatesAndApplies(t *testing.T) {
 
 	const commands = 100
 	for i := 0; i < commands; i++ {
-		if _, _, ok := leader.Submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
+		if _, _, ok := leader.submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
 			t.Fatalf("submit %d rejected by the leader", i)
 		}
 	}
@@ -398,7 +393,7 @@ func TestClusterReplicatesAndApplies(t *testing.T) {
 	}
 
 	for i, machine := range machines {
-		if got := machine.snapshot(); !equalStrings(got, want) {
+		if got := machine.snapshot(); !slices.Equal(got, want) {
 			t.Errorf("node=%s applied %d commands, want %d in order",
 				nodes[i].id, len(got), commands)
 		}
@@ -413,7 +408,7 @@ func TestClusterRepairsDivergentFollower(t *testing.T) {
 
 	const commands = 20
 	for i := 0; i < commands; i++ {
-		if _, _, ok := leader.Submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
+		if _, _, ok := leader.submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
 			t.Fatalf("submit %d rejected by the leader", i)
 		}
 	}

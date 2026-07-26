@@ -49,7 +49,7 @@ func TestIsolatedNodeDoesNotDisruptOnRejoin(t *testing.T) {
 			termBefore, got)
 	}
 
-	if _, _, ok := leader.Submit([]byte("still-writable")); !ok {
+	if _, _, ok := leader.submit([]byte("still-writable")); !ok {
 		t.Error("leader could not accept a write after the rejoin")
 	}
 }

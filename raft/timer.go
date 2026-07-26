@@ -2,7 +2,6 @@ package raft
 
 import (
 	"context"
-	"fmt"
 	"math/rand/v2"
 	"time"
 )
@@ -20,9 +19,9 @@ const (
 )
 
 func randomElectionTimeout() time.Duration {
-	randomNumber := 150 + rand.IntN(151)
+	spread := maxElectionTimeout - minElectionTimeout
 
-	return time.Duration(randomNumber) * time.Millisecond
+	return minElectionTimeout + rand.N(spread+1)
 }
 
 func (r *Raft) runElectionTimer(ctx context.Context) {
@@ -33,13 +32,13 @@ func (r *Raft) runElectionTimer(ctx context.Context) {
 		select {
 		case <-timer.C:
 			state, term := r.getStateAndTerm()
-			fmt.Printf("node=%s election timeout after=%s state=%s term=%d\n", r.id, timeout, state, term)
+			r.logger.Debug("election timeout", "after", timeout, "state", state, "term", term)
 
 			go r.campaign(ctx)
 
 		case <-r.electionResetCh:
 			timer.Stop()
-			fmt.Printf("node=%s election timer reset\n", r.id)
+			r.logger.Debug("election timer reset")
 		case <-ctx.Done():
 			timer.Stop()
 			return

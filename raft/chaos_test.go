@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -307,7 +308,7 @@ func TestChaos(t *testing.T) {
 
 		same := true
 		for _, machine := range machines[1:] {
-			if !equalStrings(reference, machine.snapshot()) {
+			if !slices.Equal(reference, machine.snapshot()) {
 				same = false
 				break
 			}

@@ -3,6 +3,7 @@ package raft
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -60,7 +61,7 @@ func (m *recordingStateMachine) count() int {
 
 func newTestApplier(commands []string, commitIndex uint64) (*Raft, *recordingStateMachine) {
 	machine := &recordingStateMachine{}
-	r, err := New("n1", nil, nil, machine, nil)
+	r, err := New("n1", nil, nil, machine, &memStorage{})
 	if err != nil {
 		panic(err)
 	}
@@ -74,18 +75,6 @@ func newTestApplier(commands []string, commitIndex uint64) (*Raft, *recordingSta
 	r.commitIndex = commitIndex
 
 	return r, machine
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestApplyCommitted(t *testing.T) {
@@ -121,7 +110,7 @@ func TestApplyCommitted(t *testing.T) {
 
 			r.applyCommitted()
 
-			if got := machine.snapshot(); !equalStrings(got, tt.wantApplied) {
+			if got := machine.snapshot(); !slices.Equal(got, tt.wantApplied) {
 				t.Errorf("applied = %v, want %v", got, tt.wantApplied)
 			}
 
@@ -151,7 +140,7 @@ func TestApplyCommittedResumesAfterCommitAdvances(t *testing.T) {
 	r.applyCommitted()
 
 	want := []string{"a", "b", "c"}
-	if got := machine.snapshot(); !equalStrings(got, want) {
+	if got := machine.snapshot(); !slices.Equal(got, want) {
 		t.Fatalf("applied = %v, want %v", got, want)
 	}
 }
@@ -163,7 +152,7 @@ func TestApplyCommittedSkipsFailedEntry(t *testing.T) {
 	r.applyCommitted()
 
 	want := []string{"a", "c"}
-	if got := machine.snapshot(); !equalStrings(got, want) {
+	if got := machine.snapshot(); !slices.Equal(got, want) {
 		t.Fatalf("applied = %v, want %v", got, want)
 	}
 

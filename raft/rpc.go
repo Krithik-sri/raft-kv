@@ -2,7 +2,6 @@ package raft
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -13,8 +12,7 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 
 	votes := 1
 
-	clusterSize := len(r.peers) + 1
-	majority := clusterSize/2 + 1
+	majority := r.majority()
 
 	req := r.makeRequestVoteRequest()
 
@@ -27,16 +25,11 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 			resp, err := r.transport.RequestVote(ctx, peer, req)
 
 			if err != nil {
-				fmt.Printf("failed requesting vote from %s: %v\n", peer.ID, err)
+				r.logger.Debug("vote request failed", "peer", peer.ID, "err", err)
 				return
 			}
 
-			fmt.Printf(
-				"peer=%s term=%d granted=%t\n",
-				peer.ID,
-				resp.Term,
-				resp.VoteGranted,
-			)
+			r.logger.Debug("vote reply", "peer", peer.ID, "term", resp.Term, "granted", resp.VoteGranted)
 
 			if resp.Term > req.Term {
 				r.becomeFollower(resp.Term)
@@ -53,17 +46,11 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 				currentVotes := votes
 				votesMu.Unlock()
 
-				fmt.Printf(
-					"node=%s election term=%d votes=%d majority=%d\n",
-					r.id,
-					req.Term,
-					currentVotes,
-					majority,
-				)
+				r.logger.Debug("election progress", "term", req.Term, "votes", currentVotes, "majority", majority)
 
 				if currentVotes >= majority {
 					if r.becomeLeader(req.Term) {
-						fmt.Printf("node=%s became leader term=%d\n", r.id, req.Term)
+						r.logger.Info("became leader", "term", req.Term)
 						go r.runReplication(ctx, req.Term)
 					}
 				}
@@ -112,17 +99,12 @@ func (r *Raft) replicateTo(ctx context.Context, peer Peer, term uint64) {
 	resp, err := r.transport.AppendEntries(ctx, peer, req)
 
 	if err != nil {
-		fmt.Printf("failed replicating to %s: %v\n", peer.ID, err)
+		r.logger.Debug("replication failed", "peer", peer.ID, "err", err)
 		return
 	}
 
 	if resp.Term > term {
-		fmt.Printf(
-			"node=%s stepping down peer=%s term=%d\n",
-			r.id,
-			peer.ID,
-			resp.Term,
-		)
+		r.logger.Info("stepping down", "peer", peer.ID, "term", resp.Term)
 		r.becomeFollower(resp.Term)
 		return
 	}
@@ -151,7 +133,7 @@ func (r *Raft) runReplication(ctx context.Context, term uint64) {
 
 	for {
 		if !r.isLeaderForTerm(term) {
-			fmt.Printf("node=%s stopping replication term=%d\n", r.id, term)
+			r.logger.Info("stopping replication", "term", term)
 			return
 		}
 
@@ -207,7 +189,7 @@ func (r *Raft) HandleRequestVote(
 
 	if term != r.currentTerm || votedFor != r.votedFor {
 		if err := r.storage.SaveState(term, votedFor); err != nil {
-			fmt.Printf("node=%s failed persisting vote: %v\n", r.id, err)
+			r.logger.Error("failed persisting vote", "err", err)
 
 			current := r.currentTerm
 			r.mu.Unlock()
@@ -257,7 +239,7 @@ func (r *Raft) HandleAppendEntries(
 
 	if req.Term > r.currentTerm {
 		if err := r.storage.SaveState(req.Term, ""); err != nil {
-			fmt.Printf("node=%s failed persisting term: %v\n", r.id, err)
+			r.logger.Error("failed persisting term", "err", err)
 
 			current := r.currentTerm
 			r.mu.Unlock()
@@ -311,18 +293,16 @@ func (r *Raft) HandleAppendEntries(
 		fresh := req.Entries[appendFrom:]
 
 		if truncateAt > 0 && truncateAt <= r.lastApplied {
-			fmt.Printf(
-				"node=%s SAFETY: truncation at %d would discard applied entries (lastApplied=%d commitIndex=%d)\n",
-				r.id,
-				truncateAt,
-				r.lastApplied,
-				r.commitIndex,
+			r.logger.Warn("SAFETY: truncation would discard applied entries",
+				"truncateAt", truncateAt,
+				"lastApplied", r.lastApplied,
+				"commitIndex", r.commitIndex,
 			)
 		}
 
 		if truncateAt > 0 {
 			if err := r.storage.TruncateLog(truncateAt); err != nil {
-				fmt.Printf("node=%s failed persisting truncation: %v\n", r.id, err)
+				r.logger.Error("failed persisting truncation", "err", err)
 
 				current := r.currentTerm
 				r.mu.Unlock()
@@ -337,7 +317,7 @@ func (r *Raft) HandleAppendEntries(
 		}
 
 		if err := r.storage.AppendLog(fresh); err != nil {
-			fmt.Printf("node=%s failed persisting entries: %v\n", r.id, err)
+			r.logger.Error("failed persisting entries", "err", err)
 
 			current := r.currentTerm
 			r.mu.Unlock()
@@ -360,11 +340,7 @@ func (r *Raft) HandleAppendEntries(
 	if req.LeaderCommit > r.commitIndex {
 		lastNewIndex := req.PrevLogIndex + uint64(len(req.Entries))
 
-		if req.LeaderCommit < lastNewIndex {
-			r.commitIndex = req.LeaderCommit
-		} else {
-			r.commitIndex = lastNewIndex
-		}
+		r.commitIndex = min(req.LeaderCommit, lastNewIndex)
 
 		r.signalApply()
 	}

@@ -11,7 +11,7 @@ func submitN(t *testing.T, leader *Raft, prefix string, n int) {
 	t.Helper()
 
 	for i := 0; i < n; i++ {
-		if _, _, ok := leader.Submit([]byte(fmt.Sprintf("%s-%d", prefix, i))); !ok {
+		if _, _, ok := leader.submit([]byte(fmt.Sprintf("%s-%d", prefix, i))); !ok {
 			t.Fatalf("submit %s-%d rejected", prefix, i)
 		}
 	}

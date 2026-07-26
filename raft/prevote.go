@@ -2,7 +2,6 @@ package raft
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -41,7 +40,7 @@ func (r *Raft) winPreVote(ctx context.Context, req RequestVoteRequest) bool {
 		return true
 	}
 
-	majority := (len(r.peers)+1)/2 + 1
+	majority := r.majority()
 
 	var (
 		wg    sync.WaitGroup
@@ -75,9 +74,6 @@ func (r *Raft) winPreVote(ctx context.Context, req RequestVoteRequest) bool {
 
 	wg.Wait()
 
-	mu.Lock()
-	defer mu.Unlock()
-
 	if ahead > req.Term {
 		r.becomeFollower(ahead)
 		return false
@@ -108,7 +104,7 @@ func (r *Raft) campaign(ctx context.Context) {
 	}
 
 	if !r.winPreVote(ctx, preVote) {
-		fmt.Printf("node=%s pre-vote failed term=%d\n", r.id, term+1)
+		r.logger.Debug("pre-vote failed", "term", term+1)
 		return
 	}
 
@@ -116,7 +112,7 @@ func (r *Raft) campaign(ctx context.Context) {
 		return
 	}
 
-	fmt.Printf("node=%s starting election term=%d\n", r.id, term+1)
+	r.logger.Info("starting election", "term", term+1)
 
 	r.RequestVotes(ctx)
 }

@@ -3,6 +3,8 @@ package raft
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"slices"
 	"sync"
 	"time"
 )
@@ -16,6 +18,7 @@ type Raft struct {
 	transport    Transport
 	stateMachine StateMachine
 	storage      Storage
+	logger       *slog.Logger
 
 	currentTerm uint64
 	votedFor    NodeID
@@ -48,12 +51,9 @@ func New(
 	stateMachine StateMachine,
 	storage Storage,
 ) (*Raft, error) {
-	if storage == nil {
-		storage = nopStorage{}
-	}
-
 	r := &Raft{
 		id:           id,
+		logger:       slog.Default().With("node", string(id)),
 		state:        Follower,
 		peers:        peers,
 		transport:    transport,
@@ -99,13 +99,11 @@ func New(
 	}
 
 	if state.SnapshotIndex > 0 || len(state.Log) > 0 {
-		fmt.Printf(
-			"node=%s recovered term=%d votedFor=%q snapshot=%d entries=%d\n",
-			id,
-			r.currentTerm,
-			r.votedFor,
-			r.snapshotIndex,
-			len(state.Log),
+		r.logger.Info("recovered",
+			"term", r.currentTerm,
+			"votedFor", r.votedFor,
+			"snapshot", r.snapshotIndex,
+			"entries", len(state.Log),
 		)
 	}
 
@@ -141,7 +139,7 @@ func (r *Raft) becomeCandidate(expectedTerm uint64) bool {
 	term := r.currentTerm + 1
 
 	if err := r.storage.SaveState(term, r.id); err != nil {
-		fmt.Printf("node=%s failed persisting candidacy: %v\n", r.id, err)
+		r.logger.Error("failed persisting candidacy", "err", err)
 		return false
 	}
 
@@ -215,17 +213,11 @@ func (r *Raft) makeAppendEntriesRequestFor(
 
 	nextIndex := r.nextIndex[peerID]
 
-	if nextIndex <= r.snapshotIndex {
-		nextIndex = r.snapshotIndex + 1
-	}
-	if last := r.lastLogIndexLocked(); nextIndex > last+1 {
-		nextIndex = last + 1
-	}
+	nextIndex = min(max(nextIndex, r.snapshotIndex+1), r.lastLogIndexLocked()+1)
 
 	start := int(nextIndex - r.snapshotIndex)
 
-	entries := make([]LogEntry, len(r.log)-start)
-	copy(entries, r.log[start:])
+	entries := slices.Clone(r.log[start:])
 
 	return AppendEntriesRequest{
 		Term:         r.currentTerm,
@@ -237,7 +229,7 @@ func (r *Raft) makeAppendEntriesRequestFor(
 	}, true
 }
 
-func (r *Raft) Submit(command []byte) (uint64, uint64, bool) {
+func (r *Raft) submit(command []byte) (uint64, uint64, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -247,11 +239,11 @@ func (r *Raft) Submit(command []byte) (uint64, uint64, bool) {
 
 	index, term, err := r.appendCommandLocked(command)
 	if err != nil {
-		fmt.Printf("node=%s failed persisting command: %v\n", r.id, err)
+		r.logger.Error("failed persisting command", "err", err)
 		return 0, 0, false
 	}
 
-	fmt.Printf("node=%s submitted index=%d term=%d\n", r.id, index, term)
+	r.logger.Debug("submitted", "index", index, "term", term)
 
 	return index, term, true
 }
@@ -285,8 +277,12 @@ func (r *Raft) retreatNextIndex(peerID NodeID, term uint64) {
 	}
 }
 
+func (r *Raft) majority() int {
+	return (len(r.peers)+1)/2 + 1
+}
+
 func (r *Raft) advanceCommitIndexLocked() {
-	majority := (len(r.peers)+1)/2 + 1
+	majority := r.majority()
 
 	for index := r.lastLogIndexLocked(); index > r.commitIndex; index-- {
 		if term, ok := r.termAtLocked(index); !ok || term != r.currentTerm {
@@ -304,12 +300,7 @@ func (r *Raft) advanceCommitIndexLocked() {
 			r.commitIndex = index
 			r.signalApply()
 
-			fmt.Printf(
-				"node=%s commitIndex=%d term=%d\n",
-				r.id,
-				index,
-				r.currentTerm,
-			)
+			r.logger.Debug("commit advanced", "index", index, "term", r.currentTerm)
 			return
 		}
 	}
@@ -335,7 +326,7 @@ func (r *Raft) becomeFollower(term uint64) {
 
 	if term > r.currentTerm {
 		if err := r.storage.SaveState(term, ""); err != nil {
-			fmt.Printf("node=%s failed persisting term=%d: %v\n", r.id, term, err)
+			r.logger.Error("failed persisting term", "term", term, "err", err)
 		} else {
 			r.currentTerm = term
 			r.votedFor = ""
@@ -363,7 +354,7 @@ func (r *Raft) becomeLeader(term uint64) bool {
 	noop := LogEntry{Term: r.currentTerm}
 
 	if err := r.storage.AppendLog([]LogEntry{noop}); err != nil {
-		fmt.Printf("node=%s failed persisting leader no-op: %v\n", r.id, err)
+		r.logger.Error("failed persisting leader no-op", "err", err)
 		return false
 	}
 

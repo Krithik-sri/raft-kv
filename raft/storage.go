@@ -28,19 +28,3 @@ type Storage interface {
 	) error
 	LoadSnapshot() ([]byte, bool, error)
 }
-
-type nopStorage struct{}
-
-var _ Storage = nopStorage{}
-
-func (nopStorage) Load() (PersistentState, error) { return PersistentState{}, nil }
-func (nopStorage) SaveState(uint64, NodeID) error { return nil }
-func (nopStorage) AppendLog([]LogEntry) error     { return nil }
-func (nopStorage) TruncateLog(index uint64) error { return nil }
-func (nopStorage) LoadSnapshot() ([]byte, bool, error) {
-	return nil, false, nil
-}
-
-func (nopStorage) SaveSnapshot(Snapshot, uint64, NodeID, []LogEntry) error {
-	return nil
-}

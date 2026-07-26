@@ -15,7 +15,7 @@ func TestSnapshotTrimsLogAndKeepsBoundary(t *testing.T) {
 
 	const commands = 40
 	for i := 0; i < commands; i++ {
-		if _, _, ok := leader.Submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
+		if _, _, ok := leader.submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
 			t.Fatalf("submit %d rejected", i)
 		}
 	}
@@ -66,7 +66,7 @@ func TestReplicationContinuesAfterSnapshot(t *testing.T) {
 	leader := waitForLeader(t, nodes, 5*time.Second)
 
 	for i := 0; i < 30; i++ {
-		if _, _, ok := leader.Submit([]byte(fmt.Sprintf("first-%d", i))); !ok {
+		if _, _, ok := leader.submit([]byte(fmt.Sprintf("first-%d", i))); !ok {
 			t.Fatalf("submit %d rejected", i)
 		}
 	}
@@ -186,7 +186,7 @@ func TestLaggingFollowerReceivesSnapshot(t *testing.T) {
 
 	const commands = 40
 	for i := 0; i < commands; i++ {
-		if _, _, ok := leader.Submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
+		if _, _, ok := leader.submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
 			t.Fatalf("submit %d rejected", i)
 		}
 	}

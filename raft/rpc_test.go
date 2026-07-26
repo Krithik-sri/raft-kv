@@ -1,9 +1,12 @@
 package raft
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func newTestRaft() *Raft {
-	r, err := New("n1", nil, nil, &recordingStateMachine{}, nil)
+	r, err := New("n1", nil, nil, &recordingStateMachine{}, &memStorage{})
 	if err != nil {
 		panic(err)
 	}
@@ -23,18 +26,6 @@ func logTerms(entries []LogEntry) []uint64 {
 		terms[i] = entry.Term
 	}
 	return terms
-}
-
-func equalTerms(a, b []uint64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestHandleAppendEntries(t *testing.T) {
@@ -120,7 +111,7 @@ func TestHandleAppendEntries(t *testing.T) {
 			}
 
 			got := logTerms(r.log)
-			if !equalTerms(got, tt.wantTerms) {
+			if !slices.Equal(got, tt.wantTerms) {
 				t.Errorf("log terms = %v, want %v", got, tt.wantTerms)
 			}
 

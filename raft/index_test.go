@@ -3,7 +3,7 @@ package raft
 import "testing"
 
 func newTrimmedRaft(snapshotIndex, snapshotTerm uint64, terms []uint64) *Raft {
-	r, err := New("n1", []Peer{{ID: "n2"}}, nil, &recordingStateMachine{}, nil)
+	r, err := New("n1", []Peer{{ID: "n2"}}, nil, &recordingStateMachine{}, &memStorage{})
 	if err != nil {
 		panic(err)
 	}

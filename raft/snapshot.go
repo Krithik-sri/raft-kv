@@ -2,7 +2,7 @@ package raft
 
 import (
 	"context"
-	"fmt"
+	"slices"
 	"time"
 )
 
@@ -24,16 +24,12 @@ func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
 	data, ok, err := r.storage.LoadSnapshot()
 	if err != nil {
 		r.mu.Unlock()
-		fmt.Printf("node=%s reading snapshot failed: %v\n", r.id, err)
+		r.logger.Error("reading snapshot failed", "err", err)
 		return
 	}
 	if !ok {
 		r.mu.Unlock()
-		fmt.Printf(
-			"node=%s peer=%s needs a snapshot but none is stored\n",
-			r.id,
-			peer.ID,
-		)
+		r.logger.Warn("peer needs a snapshot but none is stored", "peer", peer.ID)
 		return
 	}
 
@@ -47,18 +43,13 @@ func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
 
 	r.mu.Unlock()
 
-	fmt.Printf(
-		"node=%s sending snapshot peer=%s index=%d\n",
-		r.id,
-		peer.ID,
-		req.LastIncludedIndex,
-	)
+	r.logger.Debug("sending snapshot", "peer", peer.ID, "index", req.LastIncludedIndex)
 
 	callCtx, cancel := context.WithTimeout(ctx, snapshotSendTimeout)
 	resp, err := r.transport.InstallSnapshot(callCtx, peer, req)
 	cancel()
 	if err != nil {
-		fmt.Printf("failed installing snapshot on %s: %v\n", peer.ID, err)
+		r.logger.Debug("snapshot install failed", "peer", peer.ID, "err", err)
 		return
 	}
 
@@ -91,7 +82,7 @@ func (r *Raft) HandleInstallSnapshot(
 
 	if req.Term > r.currentTerm {
 		if err := r.storage.SaveState(req.Term, ""); err != nil {
-			fmt.Printf("node=%s failed persisting term: %v\n", r.id, err)
+			r.logger.Error("failed persisting term", "err", err)
 
 			term := r.currentTerm
 			r.mu.Unlock()
@@ -122,12 +113,11 @@ func (r *Raft) HandleInstallSnapshot(
 	if existing, ok := r.termAtLocked(req.LastIncludedIndex); ok &&
 		existing == req.LastIncludedTerm {
 		offset, _ := r.offsetLocked(req.LastIncludedIndex)
-		retained = make([]LogEntry, len(r.log)-offset-1)
-		copy(retained, r.log[offset+1:])
+		retained = slices.Clone(r.log[offset+1:])
 	}
 
 	if err := r.stateMachine.Restore(req.Data); err != nil {
-		fmt.Printf("node=%s restoring snapshot failed: %v\n", r.id, err)
+		r.logger.Error("restoring snapshot failed", "err", err)
 		return InstallSnapshotResponse{Term: term}
 	}
 
@@ -142,7 +132,7 @@ func (r *Raft) HandleInstallSnapshot(
 		retained,
 	)
 	if err != nil {
-		fmt.Printf("node=%s persisting snapshot failed: %v\n", r.id, err)
+		r.logger.Error("persisting snapshot failed", "err", err)
 		return InstallSnapshotResponse{Term: term}
 	}
 
@@ -150,23 +140,17 @@ func (r *Raft) HandleInstallSnapshot(
 	r.snapshotIndex = req.LastIncludedIndex
 	r.snapshotTerm = req.LastIncludedTerm
 
-	if r.commitIndex < req.LastIncludedIndex {
-		r.commitIndex = req.LastIncludedIndex
-	}
-	if r.lastApplied < req.LastIncludedIndex {
-		r.lastApplied = req.LastIncludedIndex
-	}
+	r.commitIndex = max(r.commitIndex, req.LastIncludedIndex)
+	r.lastApplied = max(r.lastApplied, req.LastIncludedIndex)
 
 	if r.commitIndex > r.lastApplied {
 		r.signalApply()
 	}
 
-	fmt.Printf(
-		"node=%s installed snapshot index=%d term=%d retained=%d\n",
-		r.id,
-		req.LastIncludedIndex,
-		req.LastIncludedTerm,
-		len(retained),
+	r.logger.Info("installed snapshot",
+		"index", req.LastIncludedIndex,
+		"term", req.LastIncludedTerm,
+		"retained", len(retained),
 	)
 
 	r.resetElectionTimer()

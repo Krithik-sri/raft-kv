@@ -2,7 +2,7 @@ package raft
 
 import (
 	"context"
-	"fmt"
+	"slices"
 )
 
 func (r *Raft) signalApply() {
@@ -36,13 +36,9 @@ func (r *Raft) applyCommitted() {
 		return
 	}
 
-	count := int(end - r.lastApplied)
-	if start+count > len(r.log) {
-		count = len(r.log) - start
-	}
+	count := min(int(end-r.lastApplied), len(r.log)-start)
 
-	pending := make([]LogEntry, count)
-	copy(pending, r.log[start:start+count])
+	pending := slices.Clone(r.log[start : start+count])
 	r.lastApplied = first + uint64(count) - 1
 
 	r.mu.Unlock()
@@ -63,21 +59,11 @@ func (r *Raft) applyCommitted() {
 		})
 
 		if err != nil {
-			fmt.Printf(
-				"node=%s apply failed index=%d: %v\n",
-				r.id,
-				index,
-				err,
-			)
+			r.logger.Error("apply failed", "index", index, "err", err)
 			continue
 		}
 
-		fmt.Printf(
-			"node=%s applied index=%d term=%d\n",
-			r.id,
-			index,
-			entry.Term,
-		)
+		r.logger.Debug("applied", "index", index, "term", entry.Term)
 	}
 }
 
@@ -102,7 +88,7 @@ func (r *Raft) maybeSnapshot() {
 
 	data, err := r.stateMachine.Snapshot()
 	if err != nil {
-		fmt.Printf("node=%s snapshot failed: %v\n", r.id, err)
+		r.logger.Error("snapshot failed", "err", err)
 		return
 	}
 
@@ -123,8 +109,7 @@ func (r *Raft) maybeSnapshot() {
 		return
 	}
 
-	retained := make([]LogEntry, len(r.log)-offset-1)
-	copy(retained, r.log[offset+1:])
+	retained := slices.Clone(r.log[offset+1:])
 
 	err = r.storage.SaveSnapshot(
 		Snapshot{Index: index, Term: term, Data: data},
@@ -133,7 +118,7 @@ func (r *Raft) maybeSnapshot() {
 		retained,
 	)
 	if err != nil {
-		fmt.Printf("node=%s persisting snapshot failed: %v\n", r.id, err)
+		r.logger.Error("persisting snapshot failed", "err", err)
 		return
 	}
 
@@ -141,13 +126,7 @@ func (r *Raft) maybeSnapshot() {
 	r.snapshotIndex = index
 	r.snapshotTerm = term
 
-	fmt.Printf(
-		"node=%s snapshot index=%d term=%d retained=%d\n",
-		r.id,
-		index,
-		term,
-		len(retained),
-	)
+	r.logger.Info("snapshot taken", "index", index, "term", term, "retained", len(retained))
 }
 
 func (r *Raft) runApplyLoop(ctx context.Context) {
