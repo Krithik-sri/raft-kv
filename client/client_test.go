@@ -2,112 +2,52 @@ package client
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"testing"
 	"time"
 
-	"github.com/krithik-sri/raft-kv/kvstore"
-	raftpb "github.com/krithik-sri/raft-kv/proto"
-	"github.com/krithik-sri/raft-kv/raft"
-	grpctransport "github.com/krithik-sri/raft-kv/transport/grpc"
-	"google.golang.org/grpc"
+	"github.com/krithik-sri/raft-kv/internal/cluster"
 )
 
-type clusterNode struct {
-	address string
-	node    *raft.Raft
-	server  *grpc.Server
-	cancel  context.CancelFunc
-	stopped bool
-}
-
-func (n *clusterNode) stop() {
-	if n.stopped {
-		return
-	}
-	n.stopped = true
-	n.cancel()
-	n.server.Stop()
-}
-
-func startCluster(t *testing.T, size int) ([]*clusterNode, []string) {
+func startCluster(t *testing.T, size int) *cluster.Cluster {
 	t.Helper()
 
-	listeners := make([]net.Listener, size)
-	ids := make([]raft.NodeID, size)
-	addresses := make([]string, size)
+	c, err := cluster.Start(size, t.TempDir())
+	if err != nil {
+		t.Fatalf("start cluster: %v", err)
+	}
+	t.Cleanup(c.Stop)
 
-	for i := 0; i < size; i++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("listen: %v", err)
-		}
-		listeners[i] = listener
-		ids[i] = raft.NodeID(fmt.Sprintf("n%d", i+1))
-		addresses[i] = listener.Addr().String()
+	if c.WaitForLeader(15*time.Second) == nil {
+		t.Fatal("no leader emerged")
 	}
 
-	nodes := make([]*clusterNode, size)
-
-	for i := 0; i < size; i++ {
-		var peers []raft.Peer
-		for j := 0; j < size; j++ {
-			if j != i {
-				peers = append(peers, raft.Peer{ID: ids[j], Address: addresses[j]})
-			}
-		}
-
-		store := kvstore.New()
-		node, err := raft.New(ids[i], peers, &grpctransport.Transport{}, store, nil)
-		if err != nil {
-			t.Fatalf("New %s: %v", ids[i], err)
-		}
-
-		server := grpc.NewServer()
-		raftpb.RegisterRaftServiceServer(server, grpctransport.NewServer(node))
-		raftpb.RegisterKVServiceServer(server, grpctransport.NewKVServer(node, store, peers))
-
-		ctx, cancel := context.WithCancel(context.Background())
-
-		go server.Serve(listeners[i])
-		go node.Start(ctx)
-
-		nodes[i] = &clusterNode{
-			address: addresses[i],
-			node:    node,
-			server:  server,
-			cancel:  cancel,
-		}
-	}
-
-	t.Cleanup(func() {
-		for _, n := range nodes {
-			n.stop()
-		}
-	})
-
-	return nodes, addresses
+	return c
 }
 
-func waitForLeader(t *testing.T, nodes []*clusterNode, timeout time.Duration) *clusterNode {
+// getEventually retries because reads are served from the leader's local state
+// machine with no quorum check: a leader that has just been deposed but has not
+// noticed will answer with stale data. Committed writes are never lost, so the
+// value must show up, but not necessarily on the first attempt.
+func getEventually(t *testing.T, kv *Client, key, want string, timeout time.Duration) {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
+	var last string
+
 	for time.Now().Before(deadline) {
-		for _, n := range nodes {
-			if n.stopped {
-				continue
-			}
-			if _, isLeader := n.node.LeaderHint(); isLeader {
-				return n
-			}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		value, found, err := kv.Get(ctx, key)
+		cancel()
+
+		if err == nil && found && value == want {
+			return
 		}
+		last = value
+
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	t.Fatal("no leader emerged")
-	return nil
+	t.Fatalf("Get(%q) = %q, want %q within %s", key, last, want, timeout)
 }
 
 func newTestClient(t *testing.T, addresses []string) *Client {
@@ -123,10 +63,8 @@ func newTestClient(t *testing.T, addresses []string) *Client {
 }
 
 func TestClientPutGetDelete(t *testing.T) {
-	nodes, addresses := startCluster(t, 3)
-	waitForLeader(t, nodes, 10*time.Second)
-
-	kv := newTestClient(t, addresses)
+	c := startCluster(t, 3)
+	kv := newTestClient(t, c.Addresses)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -156,10 +94,8 @@ func TestClientPutGetDelete(t *testing.T) {
 }
 
 func TestClientCompareAndSwap(t *testing.T) {
-	nodes, addresses := startCluster(t, 3)
-	waitForLeader(t, nodes, 10*time.Second)
-
-	kv := newTestClient(t, addresses)
+	c := startCluster(t, 3)
+	kv := newTestClient(t, c.Addresses)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -186,10 +122,8 @@ func TestClientCompareAndSwap(t *testing.T) {
 }
 
 func TestClientSurvivesLeaderFailure(t *testing.T) {
-	nodes, addresses := startCluster(t, 3)
-	waitForLeader(t, nodes, 10*time.Second)
-
-	kv := newTestClient(t, addresses)
+	c := startCluster(t, 3)
+	kv := newTestClient(t, c.Addresses)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -198,26 +132,13 @@ func TestClientSurvivesLeaderFailure(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	leader := waitForLeader(t, nodes, 10*time.Second)
-	leader.stop()
+	c.WaitForLeader(10 * time.Second).Stop()
 
-	value, found, err := kv.Get(ctx, "foo")
-	if err != nil {
-		t.Fatalf("Get after leader failure: %v", err)
-	}
-	if !found || value != "bar" {
-		t.Errorf("Get after leader failure = %q found=%v, want \"bar\" true", value, found)
-	}
+	getEventually(t, kv, "foo", "bar", 15*time.Second)
 
 	if err := kv.Put(ctx, "foo", "baz"); err != nil {
 		t.Fatalf("Put after leader failure: %v", err)
 	}
 
-	value, found, err = kv.Get(ctx, "foo")
-	if err != nil {
-		t.Fatalf("Get after failover write: %v", err)
-	}
-	if !found || value != "baz" {
-		t.Errorf("Get after failover write = %q found=%v, want \"baz\" true", value, found)
-	}
+	getEventually(t, kv, "foo", "baz", 15*time.Second)
 }

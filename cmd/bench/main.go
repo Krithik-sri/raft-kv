@@ -5,141 +5,31 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
+	"log/slog"
 	"os"
-	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/krithik-sri/raft-kv/client"
-	"github.com/krithik-sri/raft-kv/kvstore"
-	raftpb "github.com/krithik-sri/raft-kv/proto"
-	"github.com/krithik-sri/raft-kv/raft"
-	"github.com/krithik-sri/raft-kv/storage"
-	grpctransport "github.com/krithik-sri/raft-kv/transport/grpc"
-	"google.golang.org/grpc"
+	"github.com/krithik-sri/raft-kv/internal/cluster"
 )
 
-type node struct {
-	id      raft.NodeID
-	address string
-	raft    *raft.Raft
-	server  *grpc.Server
-	store   *storage.File
-	cancel  context.CancelFunc
-	stopped bool
-}
-
-func (n *node) stop() {
-	if n.stopped {
-		return
-	}
-	n.stopped = true
-	n.cancel()
-	n.server.Stop()
-	n.store.Close()
-}
-
-type cluster struct {
-	nodes     []*node
-	addresses []string
-	dataDir   string
-}
-
-func (c *cluster) stop() {
-	for _, n := range c.nodes {
-		n.stop()
-	}
-	os.RemoveAll(c.dataDir)
-}
-
-func (c *cluster) leader() *node {
-	for _, n := range c.nodes {
-		if n.stopped {
-			continue
-		}
-		if _, isLeader := n.raft.LeaderHint(); isLeader {
-			return n
-		}
-	}
-	return nil
-}
-
-func (c *cluster) waitForLeader(timeout time.Duration) *node {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if leader := c.leader(); leader != nil {
-			return leader
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return nil
-}
-
-func startCluster(size int) (*cluster, error) {
+func newCluster(size int) (*cluster.Cluster, string, error) {
 	dataDir, err := os.MkdirTemp("", "raft-bench-")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	listeners := make([]net.Listener, size)
-	ids := make([]raft.NodeID, size)
-	addresses := make([]string, size)
-
-	for i := 0; i < size; i++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return nil, err
-		}
-		listeners[i] = listener
-		ids[i] = raft.NodeID(fmt.Sprintf("n%d", i+1))
-		addresses[i] = listener.Addr().String()
+	c, err := cluster.Start(size, dataDir)
+	if err != nil {
+		os.RemoveAll(dataDir)
+		return nil, "", err
 	}
 
-	c := &cluster{addresses: addresses, dataDir: dataDir}
-
-	for i := 0; i < size; i++ {
-		var peers []raft.Peer
-		for j := 0; j < size; j++ {
-			if j != i {
-				peers = append(peers, raft.Peer{ID: ids[j], Address: addresses[j]})
-			}
-		}
-
-		store, err := storage.Open(filepath.Join(dataDir, string(ids[i])+".log"))
-		if err != nil {
-			return nil, err
-		}
-
-		machine := kvstore.New()
-		node2, err := raft.New(ids[i], peers, &grpctransport.Transport{}, machine, store)
-		if err != nil {
-			return nil, err
-		}
-
-		server := grpc.NewServer()
-		raftpb.RegisterRaftServiceServer(server, grpctransport.NewServer(node2))
-		raftpb.RegisterKVServiceServer(server, grpctransport.NewKVServer(node2, machine, peers))
-
-		ctx, cancel := context.WithCancel(context.Background())
-
-		go server.Serve(listeners[i])
-		go node2.Start(ctx)
-
-		c.nodes = append(c.nodes, &node{
-			id:      ids[i],
-			address: addresses[i],
-			raft:    node2,
-			server:  server,
-			store:   store,
-			cancel:  cancel,
-		})
-	}
-
-	return c, nil
+	return c, dataDir, nil
 }
 
 func percentile(sorted []time.Duration, p float64) time.Duration {
@@ -152,17 +42,18 @@ func percentile(sorted []time.Duration, p float64) time.Duration {
 }
 
 func runThroughput(size, writers int, duration time.Duration) error {
-	c, err := startCluster(size)
+	c, dataDir, err := newCluster(size)
 	if err != nil {
 		return err
 	}
-	defer c.stop()
+	defer c.Stop()
+	defer os.RemoveAll(dataDir)
 
-	if c.waitForLeader(20*time.Second) == nil {
+	if c.WaitForLeader(20*time.Second) == nil {
 		return fmt.Errorf("no leader emerged for a %d node cluster", size)
 	}
 
-	kv, err := client.New(c.addresses)
+	kv, err := client.New(c.Addresses)
 	if err != nil {
 		return err
 	}
@@ -219,7 +110,7 @@ func runThroughput(size, writers int, duration time.Duration) error {
 
 	elapsed := time.Since(start)
 
-	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+	slices.Sort(latencies)
 
 	throughput := float64(len(latencies)) / elapsed.Seconds()
 
@@ -238,13 +129,14 @@ func runThroughput(size, writers int, duration time.Duration) error {
 }
 
 func runFailover(size, trials int) error {
-	c, err := startCluster(size)
+	c, dataDir, err := newCluster(size)
 	if err != nil {
 		return err
 	}
-	defer c.stop()
+	defer c.Stop()
+	defer os.RemoveAll(dataDir)
 
-	kv, err := client.New(c.addresses)
+	kv, err := client.New(c.Addresses)
 	if err != nil {
 		return err
 	}
@@ -257,7 +149,7 @@ func runFailover(size, trials int) error {
 			break
 		}
 
-		leader := c.waitForLeader(20 * time.Second)
+		leader := c.WaitForLeader(20 * time.Second)
 		if leader == nil {
 			return fmt.Errorf("no leader emerged before trial %d", trial)
 		}
@@ -269,7 +161,7 @@ func runFailover(size, trials int) error {
 		}
 		cancel()
 
-		leader.stop()
+		leader.Stop()
 		began := time.Now()
 
 		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
@@ -287,7 +179,7 @@ func runFailover(size, trials int) error {
 		return fmt.Errorf("no failover trials could run for %d nodes", size)
 	}
 
-	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	slices.Sort(samples)
 
 	var total time.Duration
 	for _, sample := range samples {
@@ -311,7 +203,16 @@ func main() {
 	writers := flag.Int("writers", 8, "concurrent writers")
 	duration := flag.Duration("duration", 10*time.Second, "throughput run length per size")
 	trials := flag.Int("failover-trials", 3, "leader kills per cluster size")
+	verbose := flag.Bool("verbose", false, "let the cluster log at info level")
 	flag.Parse()
+
+	level := slog.LevelError
+	if *verbose {
+		level = slog.LevelInfo
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+	})))
 
 	var parsed []int
 	for _, field := range strings.Split(*sizes, ",") {

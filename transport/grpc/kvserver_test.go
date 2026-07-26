@@ -1,123 +1,86 @@
-package grpctransport
+package grpctransport_test
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"testing"
 	"time"
 
-	"github.com/krithik-sri/raft-kv/kvstore"
+	"github.com/krithik-sri/raft-kv/internal/cluster"
 	raftpb "github.com/krithik-sri/raft-kv/proto"
-	"github.com/krithik-sri/raft-kv/raft"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 type testNode struct {
-	id      raft.NodeID
-	address string
-	client  raftpb.KVServiceClient
+	*cluster.Node
+
+	client raftpb.KVServiceClient
 }
 
-func startTestCluster(t *testing.T, size int) []*testNode {
+func startTestCluster(t *testing.T, size int) ([]*testNode, *cluster.Cluster) {
 	t.Helper()
 
-	listeners := make([]net.Listener, size)
-	ids := make([]raft.NodeID, size)
-	addresses := make([]string, size)
-
-	for i := 0; i < size; i++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("listen: %v", err)
-		}
-		listeners[i] = listener
-		ids[i] = raft.NodeID(fmt.Sprintf("n%d", i+1))
-		addresses[i] = listener.Addr().String()
+	c, err := cluster.Start(size, t.TempDir())
+	if err != nil {
+		t.Fatalf("start cluster: %v", err)
 	}
+	t.Cleanup(c.Stop)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	nodes := make([]*testNode, size)
-
-	for i := 0; i < size; i++ {
-		var peers []raft.Peer
-		for j := 0; j < size; j++ {
-			if j != i {
-				peers = append(peers, raft.Peer{ID: ids[j], Address: addresses[j]})
-			}
-		}
-
-		store := kvstore.New()
-		node, err := raft.New(ids[i], peers, &Transport{}, store, nil)
-		if err != nil {
-			t.Fatalf("New %s: %v", ids[i], err)
-		}
-
-		server := grpc.NewServer()
-		raftpb.RegisterRaftServiceServer(server, NewServer(node))
-		raftpb.RegisterKVServiceServer(server, NewKVServer(node, store, peers))
-
-		listener := listeners[i]
-		go server.Serve(listener)
-		t.Cleanup(server.Stop)
-
-		go node.Start(ctx)
-
+	nodes := make([]*testNode, len(c.Nodes))
+	for i, node := range c.Nodes {
 		conn, err := grpc.NewClient(
-			addresses[i],
+			node.Address,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 		)
 		if err != nil {
-			t.Fatalf("dial %s: %v", addresses[i], err)
+			t.Fatalf("dial %s: %v", node.Address, err)
 		}
 		t.Cleanup(func() { conn.Close() })
 
-		nodes[i] = &testNode{
-			id:      ids[i],
-			address: addresses[i],
-			client:  raftpb.NewKVServiceClient(conn),
-		}
+		nodes[i] = &testNode{Node: node, client: raftpb.NewKVServiceClient(conn)}
 	}
 
-	return nodes
+	return nodes, c
 }
 
-func findLeader(t *testing.T, nodes []*testNode, timeout time.Duration) *testNode {
+// findLeader waits for the cluster to settle on one agreed leader, so callers
+// can safely treat every other node as a follower that will redirect.
+func findLeader(
+	t *testing.T,
+	nodes []*testNode,
+	c *cluster.Cluster,
+	timeout time.Duration,
+) *testNode {
 	t.Helper()
 
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		for _, node := range nodes {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			resp, err := node.client.Put(ctx, &raftpb.PutRequest{
-				Key:   "__probe",
-				Value: "1",
-			})
-			cancel()
-
-			if err == nil && resp.Redirect == nil {
-				return node
-			}
-		}
-		time.Sleep(20 * time.Millisecond)
+	leader := c.WaitForStableLeader(timeout)
+	if leader == nil {
+		t.Fatal("cluster did not settle on a single agreed leader")
 	}
 
-	t.Fatal("no leader answered a Put within the timeout")
+	for _, node := range nodes {
+		if node.Node == leader {
+			return node
+		}
+	}
+
+	t.Fatal("leader is not in the node list")
 	return nil
 }
 
 func TestKVServicePutGetDelete(t *testing.T) {
-	nodes := startTestCluster(t, 3)
-	leader := findLeader(t, nodes, 10*time.Second)
+	nodes, c := startTestCluster(t, 3)
+	leader := findLeader(t, nodes, c, 15*time.Second)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if _, err := leader.client.Put(ctx, &raftpb.PutRequest{Key: "colour", Value: "blue"}); err != nil {
+	put, err := leader.client.Put(ctx, &raftpb.PutRequest{Key: "colour", Value: "blue"})
+	if err != nil {
 		t.Fatalf("Put: %v", err)
+	}
+	if put.Redirect != nil {
+		t.Fatalf("leader redirected the write to %q", put.Redirect.LeaderAddress)
 	}
 
 	got, err := leader.client.Get(ctx, &raftpb.GetRequest{Key: "colour"})
@@ -142,14 +105,18 @@ func TestKVServicePutGetDelete(t *testing.T) {
 }
 
 func TestKVServiceCompareAndSwap(t *testing.T) {
-	nodes := startTestCluster(t, 3)
-	leader := findLeader(t, nodes, 10*time.Second)
+	nodes, c := startTestCluster(t, 3)
+	leader := findLeader(t, nodes, c, 15*time.Second)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if _, err := leader.client.Put(ctx, &raftpb.PutRequest{Key: "n", Value: "1"}); err != nil {
+	put, err := leader.client.Put(ctx, &raftpb.PutRequest{Key: "n", Value: "1"})
+	if err != nil {
 		t.Fatalf("Put: %v", err)
+	}
+	if put.Redirect != nil {
+		t.Fatalf("leader redirected the write to %q", put.Redirect.LeaderAddress)
 	}
 
 	swap, err := leader.client.CompareAndSwap(ctx, &raftpb.CompareAndSwapRequest{
@@ -182,8 +149,8 @@ func TestKVServiceCompareAndSwap(t *testing.T) {
 }
 
 func TestKVServiceRedirectsFromFollower(t *testing.T) {
-	nodes := startTestCluster(t, 3)
-	leader := findLeader(t, nodes, 10*time.Second)
+	nodes, c := startTestCluster(t, 3)
+	leader := findLeader(t, nodes, c, 15*time.Second)
 
 	var follower *testNode
 	for _, node := range nodes {
@@ -193,7 +160,7 @@ func TestKVServiceRedirectsFromFollower(t *testing.T) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	resp, err := follower.client.Put(ctx, &raftpb.PutRequest{Key: "k", Value: "v"})
@@ -205,11 +172,11 @@ func TestKVServiceRedirectsFromFollower(t *testing.T) {
 		t.Fatal("follower accepted a write instead of redirecting")
 	}
 
-	if resp.Redirect.LeaderAddress != leader.address {
-		t.Errorf("redirect address = %q, want %q", resp.Redirect.LeaderAddress, leader.address)
+	if resp.Redirect.LeaderAddress != leader.Address {
+		t.Errorf("redirect address = %q, want %q", resp.Redirect.LeaderAddress, leader.Address)
 	}
 
-	if resp.Redirect.LeaderId != string(leader.id) {
-		t.Errorf("redirect id = %q, want %q", resp.Redirect.LeaderId, leader.id)
+	if resp.Redirect.LeaderId != string(leader.ID) {
+		t.Errorf("redirect id = %q, want %q", resp.Redirect.LeaderId, leader.ID)
 	}
 }
