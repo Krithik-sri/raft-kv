@@ -235,8 +235,7 @@ func (r *Raft) HandleAppendEntries(
 	r.state = Follower
 	r.leaderID = req.LeaderID
 
-	if req.PrevLogIndex >= uint64(len(r.log)) ||
-		r.log[req.PrevLogIndex].Term != req.PrevLogTerm {
+	if prevTerm, ok := r.termAtLocked(req.PrevLogIndex); !ok || prevTerm != req.PrevLogTerm {
 		term := r.currentTerm
 		r.mu.Unlock()
 
@@ -254,12 +253,13 @@ func (r *Raft) HandleAppendEntries(
 	for i, entry := range req.Entries {
 		index := req.PrevLogIndex + 1 + uint64(i)
 
-		if index >= uint64(len(r.log)) {
+		existing, ok := r.termAtLocked(index)
+		if !ok {
 			appendFrom = i
 			break
 		}
 
-		if r.log[index].Term != entry.Term {
+		if existing != entry.Term {
 			appendFrom = i
 			truncateAt = index
 			break
@@ -300,7 +300,7 @@ func (r *Raft) HandleAppendEntries(
 		}
 
 		if truncateAt > 0 {
-			r.log = append(r.log[:truncateAt], fresh...)
+			r.log = append(r.log[:truncateAt-r.snapshotIndex], fresh...)
 		} else {
 			r.log = append(r.log, fresh...)
 		}

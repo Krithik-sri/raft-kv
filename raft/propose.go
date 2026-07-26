@@ -18,14 +18,16 @@ type applyOutcome struct {
 }
 
 type Status struct {
-	ID          NodeID
-	State       State
-	Term        uint64
-	VotedFor    NodeID
-	LeaderID    NodeID
-	LogLength   int
-	CommitIndex uint64
-	LastApplied uint64
+	ID            NodeID
+	State         State
+	Term          uint64
+	VotedFor      NodeID
+	LeaderID      NodeID
+	LogLength     int
+	LastLogIndex  uint64
+	SnapshotIndex uint64
+	CommitIndex   uint64
+	LastApplied   uint64
 }
 
 func (r *Raft) Status() Status {
@@ -33,14 +35,16 @@ func (r *Raft) Status() Status {
 	defer r.mu.Unlock()
 
 	return Status{
-		ID:          r.id,
-		State:       r.state,
-		Term:        r.currentTerm,
-		VotedFor:    r.votedFor,
-		LeaderID:    r.leaderID,
-		LogLength:   len(r.log),
-		CommitIndex: r.commitIndex,
-		LastApplied: r.lastApplied,
+		ID:            r.id,
+		State:         r.state,
+		Term:          r.currentTerm,
+		VotedFor:      r.votedFor,
+		LeaderID:      r.leaderID,
+		LogLength:     len(r.log),
+		LastLogIndex:  r.lastLogIndexLocked(),
+		SnapshotIndex: r.snapshotIndex,
+		CommitIndex:   r.commitIndex,
+		LastApplied:   r.lastApplied,
 	}
 }
 
@@ -59,7 +63,7 @@ func (r *Raft) appendCommandLocked(command []byte) (uint64, uint64, error) {
 	}
 
 	r.log = append(r.log, entry)
-	return uint64(len(r.log) - 1), r.currentTerm, nil
+	return r.lastLogIndexLocked(), r.currentTerm, nil
 }
 
 func (r *Raft) clearWaiter(index uint64) {

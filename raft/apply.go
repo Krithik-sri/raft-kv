@@ -21,8 +21,15 @@ func (r *Raft) applyCommitted() {
 	}
 
 	first := r.lastApplied + 1
+
+	start, ok := r.offsetLocked(first)
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+
 	pending := make([]LogEntry, r.commitIndex-r.lastApplied)
-	copy(pending, r.log[first:r.commitIndex+1])
+	copy(pending, r.log[start:start+len(pending)])
 	r.lastApplied = r.commitIndex
 
 	r.mu.Unlock()
