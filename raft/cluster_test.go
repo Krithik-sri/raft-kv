@@ -80,8 +80,14 @@ func startCluster(t *testing.T, size int) ([]*Raft, []*recordingStateMachine, co
 			}
 		}
 		machines[i] = &recordingStateMachine{}
-		nodes[i] = New(id, peers, transport, machines[i])
-		transport.register(id, nodes[i])
+
+		node, err := New(id, peers, transport, machines[i], nil)
+		if err != nil {
+			t.Fatalf("New %s: %v", id, err)
+		}
+
+		nodes[i] = node
+		transport.register(id, node)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

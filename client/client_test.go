@@ -59,7 +59,10 @@ func startCluster(t *testing.T, size int) ([]*clusterNode, []string) {
 		}
 
 		store := kvstore.New()
-		node := raft.New(ids[i], peers, &grpctransport.Transport{}, store)
+		node, err := raft.New(ids[i], peers, &grpctransport.Transport{}, store, nil)
+		if err != nil {
+			t.Fatalf("New %s: %v", ids[i], err)
+		}
 
 		server := grpc.NewServer()
 		raftpb.RegisterRaftServiceServer(server, grpctransport.NewServer(node))

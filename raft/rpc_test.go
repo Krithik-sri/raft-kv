@@ -3,7 +3,10 @@ package raft
 import "testing"
 
 func newTestRaft() *Raft {
-	r := New("n1", nil, nil, &recordingStateMachine{})
+	r, err := New("n1", nil, nil, &recordingStateMachine{}, nil)
+	if err != nil {
+		panic(err)
+	}
 	r.currentTerm = 1
 	r.log = []LogEntry{
 		{},

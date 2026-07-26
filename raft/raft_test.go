@@ -4,7 +4,10 @@ import "testing"
 
 func newTestLeader(terms []uint64, currentTerm uint64) *Raft {
 	peers := []Peer{{ID: "n2"}, {ID: "n3"}}
-	r := New("n1", peers, nil, &recordingStateMachine{})
+	r, err := New("n1", peers, nil, &recordingStateMachine{}, nil)
+	if err != nil {
+		panic(err)
+	}
 	r.currentTerm = currentTerm
 	r.state = Leader
 

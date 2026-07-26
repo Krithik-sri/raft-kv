@@ -43,7 +43,10 @@ func (m *recordingStateMachine) count() int {
 
 func newTestApplier(commands []string, commitIndex uint64) (*Raft, *recordingStateMachine) {
 	machine := &recordingStateMachine{}
-	r := New("n1", nil, nil, machine)
+	r, err := New("n1", nil, nil, machine, nil)
+	if err != nil {
+		panic(err)
+	}
 	r.currentTerm = 1
 
 	entries := []LogEntry{{}}

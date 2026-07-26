@@ -76,7 +76,10 @@ func TestProposeOnFollowerIsRejected(t *testing.T) {
 
 func TestProposeHonoursContextCancellation(t *testing.T) {
 	machine := &recordingStateMachine{}
-	r := New("n1", []Peer{{ID: "n2"}, {ID: "n3"}}, nil, machine)
+	r, err := New("n1", []Peer{{ID: "n2"}, {ID: "n3"}}, nil, machine, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	r.state = Leader
 	r.currentTerm = 1
 
