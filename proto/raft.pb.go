@@ -27,6 +27,7 @@ type RequestVoteRequest struct {
 	CandidateId   string                 `protobuf:"bytes,2,opt,name=candidate_id,json=candidateId,proto3" json:"candidate_id,omitempty"`
 	LastLogIndex  uint64                 `protobuf:"varint,3,opt,name=last_log_index,json=lastLogIndex,proto3" json:"last_log_index,omitempty"`
 	LastLogTerm   uint64                 `protobuf:"varint,4,opt,name=last_log_term,json=lastLogTerm,proto3" json:"last_log_term,omitempty"`
+	PreVote       bool                   `protobuf:"varint,5,opt,name=pre_vote,json=preVote,proto3" json:"pre_vote,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -87,6 +88,13 @@ func (x *RequestVoteRequest) GetLastLogTerm() uint64 {
 		return x.LastLogTerm
 	}
 	return 0
+}
+
+func (x *RequestVoteRequest) GetPreVote() bool {
+	if x != nil {
+		return x.PreVote
+	}
+	return false
 }
 
 type RequestVoteResponse struct {
@@ -453,12 +461,13 @@ var File_proto_raft_proto protoreflect.FileDescriptor
 
 const file_proto_raft_proto_rawDesc = "" +
 	"\n" +
-	"\x10proto/raft.proto\x12\x04raft\"\x95\x01\n" +
+	"\x10proto/raft.proto\x12\x04raft\"\xb0\x01\n" +
 	"\x12RequestVoteRequest\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12!\n" +
 	"\fcandidate_id\x18\x02 \x01(\tR\vcandidateId\x12$\n" +
 	"\x0elast_log_index\x18\x03 \x01(\x04R\flastLogIndex\x12\"\n" +
-	"\rlast_log_term\x18\x04 \x01(\x04R\vlastLogTerm\"L\n" +
+	"\rlast_log_term\x18\x04 \x01(\x04R\vlastLogTerm\x12\x19\n" +
+	"\bpre_vote\x18\x05 \x01(\bR\apreVote\"L\n" +
 	"\x13RequestVoteResponse\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12!\n" +
 	"\fvote_granted\x18\x02 \x01(\bR\vvoteGranted\"8\n" +
