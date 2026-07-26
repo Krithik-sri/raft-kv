@@ -31,3 +31,5 @@ go.work.sum
 # .idea/
 # .vscode/
 docs/
+# Raft node state written by cmd/server --data-dir
+data/

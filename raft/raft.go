@@ -33,7 +33,8 @@ type Raft struct {
 	nextIndex  map[NodeID]uint64
 	matchIndex map[NodeID]uint64
 
-	waiters map[uint64]chan applyOutcome
+	waiters     map[uint64]chan applyOutcome
+	replicating map[NodeID]bool
 
 	electionResetCh chan struct{}
 	applyCh         chan struct{}
@@ -62,9 +63,10 @@ func New(
 		log:               []LogEntry{{}},
 		snapshotThreshold: defaultSnapshotThreshold,
 
-		nextIndex:  make(map[NodeID]uint64),
-		matchIndex: make(map[NodeID]uint64),
-		waiters:    make(map[uint64]chan applyOutcome),
+		nextIndex:   make(map[NodeID]uint64),
+		matchIndex:  make(map[NodeID]uint64),
+		waiters:     make(map[uint64]chan applyOutcome),
+		replicating: make(map[NodeID]bool),
 
 		electionResetCh: make(chan struct{}, 1),
 		applyCh:         make(chan struct{}, 1),

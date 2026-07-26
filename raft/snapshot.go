@@ -54,7 +54,9 @@ func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
 		req.LastIncludedIndex,
 	)
 
-	resp, err := r.transport.InstallSnapshot(ctx, peer, req)
+	callCtx, cancel := context.WithTimeout(ctx, snapshotSendTimeout)
+	resp, err := r.transport.InstallSnapshot(callCtx, peer, req)
+	cancel()
 	if err != nil {
 		fmt.Printf("failed installing snapshot on %s: %v\n", peer.ID, err)
 		return

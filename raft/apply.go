@@ -93,8 +93,7 @@ func (r *Raft) maybeSnapshot() {
 		return
 	}
 
-	term, ok := r.termAtLocked(index)
-	if !ok {
+	if _, ok := r.termAtLocked(index); !ok {
 		r.mu.Unlock()
 		return
 	}
@@ -119,7 +118,7 @@ func (r *Raft) maybeSnapshot() {
 		return
 	}
 
-	term, ok = r.termAtLocked(index)
+	term, ok := r.termAtLocked(index)
 	if !ok {
 		return
 	}
