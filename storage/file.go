@@ -87,17 +87,26 @@ func (s *File) Close() error {
 	return s.file.Close()
 }
 
-func (s *File) writeRecord(rec record) error {
+func frame(rec record) ([]byte, error) {
 	payload, err := json.Marshal(rec)
 	if err != nil {
-		return fmt.Errorf("encode record: %w", err)
+		return nil, fmt.Errorf("encode record: %w", err)
 	}
 
-	frame := make([]byte, 4+len(payload))
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(payload)))
-	copy(frame[4:], payload)
+	out := make([]byte, 4+len(payload))
+	binary.BigEndian.PutUint32(out[:4], uint32(len(payload)))
+	copy(out[4:], payload)
 
-	if _, err := s.file.Write(frame); err != nil {
+	return out, nil
+}
+
+func (s *File) writeRecord(rec record) error {
+	encoded, err := frame(rec)
+	if err != nil {
+		return err
+	}
+
+	if _, err := s.file.Write(encoded); err != nil {
 		return fmt.Errorf("write record: %w", err)
 	}
 
@@ -197,16 +206,12 @@ func (s *File) SaveSnapshot(
 
 	var buf []byte
 	for _, rec := range compacted {
-		payload, err := json.Marshal(rec)
+		encoded, err := frame(rec)
 		if err != nil {
-			return fmt.Errorf("encode record: %w", err)
+			return err
 		}
 
-		frame := make([]byte, 4+len(payload))
-		binary.BigEndian.PutUint32(frame[:4], uint32(len(payload)))
-		copy(frame[4:], payload)
-
-		buf = append(buf, frame...)
+		buf = append(buf, encoded...)
 	}
 
 	if err := s.file.Close(); err != nil {

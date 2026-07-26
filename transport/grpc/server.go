@@ -2,7 +2,7 @@ package grpctransport
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 
 	raftpb "github.com/krithik-sri/raft-kv/proto"
 	"github.com/krithik-sri/raft-kv/raft"
@@ -29,11 +29,7 @@ func (s *Server) RequestVote(
 
 	resp := s.node.HandleRequestVote(raftReq)
 
-	fmt.Printf(
-		"received RequestVote candidate=%s term=%d\n",
-		req.CandidateId,
-		req.Term,
-	)
+	slog.Debug("received RequestVote", "candidate", req.CandidateId, "term", req.Term)
 	return &raftpb.RequestVoteResponse{
 		Term:        resp.Term,
 		VoteGranted: resp.VoteGranted,
@@ -56,11 +52,7 @@ func (s *Server) AppendEntries(
 
 	resp := s.node.HandleAppendEntries(raftReq)
 
-	fmt.Printf(
-		"received AppendEntries leader=%s term=%d\n",
-		req.LeaderId,
-		req.Term,
-	)
+	slog.Debug("received AppendEntries", "leader", req.LeaderId, "term", req.Term)
 	return &raftpb.AppendEntriesResponse{
 		Term:    resp.Term,
 		Success: resp.Success,
@@ -80,11 +72,7 @@ func (s *Server) InstallSnapshot(
 		Data:              req.Data,
 	})
 
-	fmt.Printf(
-		"received InstallSnapshot leader=%s index=%d\n",
-		req.LeaderId,
-		req.LastIncludedIndex,
-	)
+	slog.Debug("received InstallSnapshot", "leader", req.LeaderId, "index", req.LastIncludedIndex)
 
 	return &raftpb.InstallSnapshotResponse{Term: resp.Term}, nil
 }

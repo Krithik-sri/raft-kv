@@ -6,34 +6,39 @@ import (
 
 	raftpb "github.com/krithik-sri/raft-kv/proto"
 	"github.com/krithik-sri/raft-kv/raft"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Transport struct {
-	mu      sync.Mutex
-	clients map[string]*Client
+	mu    sync.Mutex
+	conns map[string]*grpc.ClientConn
 }
 
 var _ raft.Transport = (*Transport)(nil)
 
-func (t *Transport) clientFor(address string) (*Client, error) {
+func (t *Transport) clientFor(address string) (raftpb.RaftServiceClient, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.clients == nil {
-		t.clients = make(map[string]*Client)
+	if t.conns == nil {
+		t.conns = make(map[string]*grpc.ClientConn)
 	}
 
-	if client, ok := t.clients[address]; ok {
-		return client, nil
+	conn, ok := t.conns[address]
+	if !ok {
+		var err error
+		conn, err = grpc.NewClient(
+			address,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			return nil, err
+		}
+		t.conns[address] = conn
 	}
 
-	client, err := NewClient(address)
-	if err != nil {
-		return nil, err
-	}
-
-	t.clients[address] = client
-	return client, nil
+	return raftpb.NewRaftServiceClient(conn), nil
 }
 
 func (t *Transport) Close() error {
@@ -41,12 +46,12 @@ func (t *Transport) Close() error {
 	defer t.mu.Unlock()
 
 	var firstErr error
-	for _, client := range t.clients {
-		if err := client.Close(); err != nil && firstErr == nil {
+	for _, conn := range t.conns {
+		if err := conn.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
-	t.clients = nil
+	t.conns = nil
 
 	return firstErr
 }

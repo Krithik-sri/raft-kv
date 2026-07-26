@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/krithik-sri/raft-kv/raft"
@@ -50,18 +51,6 @@ func logTerms(entries []raft.LogEntry) []uint64 {
 		terms[i] = e.Term
 	}
 	return terms
-}
-
-func equalTerms(a, b []uint64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestFreshFileLoadsEmptyState(t *testing.T) {
@@ -131,7 +120,7 @@ func TestLogSurvivesReopen(t *testing.T) {
 
 	state := mustLoad(t, reopen(t, path))
 
-	if got := logTerms(state.Log); !equalTerms(got, []uint64{1, 1, 2}) {
+	if got := logTerms(state.Log); !slices.Equal(got, []uint64{1, 1, 2}) {
 		t.Fatalf("log terms = %v, want [1 1 2]", got)
 	}
 	if string(state.Log[2].Command) != "c" {
@@ -161,7 +150,7 @@ func TestTruncateSurvivesReopen(t *testing.T) {
 
 	state := mustLoad(t, reopen(t, path))
 
-	if got := logTerms(state.Log); !equalTerms(got, []uint64{1, 3}) {
+	if got := logTerms(state.Log); !slices.Equal(got, []uint64{1, 3}) {
 		t.Fatalf("log terms = %v, want [1 3]", got)
 	}
 	if string(state.Log[1].Command) != "z" {
@@ -194,7 +183,7 @@ func TestTornFinalRecordIsIgnored(t *testing.T) {
 	if state.CurrentTerm != 3 {
 		t.Errorf("CurrentTerm = %d, want 3", state.CurrentTerm)
 	}
-	if got := logTerms(state.Log); !equalTerms(got, []uint64{3}) {
+	if got := logTerms(state.Log); !slices.Equal(got, []uint64{3}) {
 		t.Errorf("log terms = %v, want [3]", got)
 	}
 }
@@ -214,7 +203,7 @@ func TestWritesAppendAfterLoad(t *testing.T) {
 		t.Fatalf("AppendLog after load: %v", err)
 	}
 
-	if got := logTerms(mustLoad(t, reopened).Log); !equalTerms(got, []uint64{1, 2}) {
+	if got := logTerms(mustLoad(t, reopened).Log); !slices.Equal(got, []uint64{1, 2}) {
 		t.Errorf("log terms = %v, want [1 2]", got)
 	}
 }

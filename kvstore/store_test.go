@@ -55,8 +55,8 @@ func TestDeleteMissingKeyIsNotAnError(t *testing.T) {
 
 	applyCommand(t, s, Command{Op: OpDelete, Key: "nope"})
 
-	if s.Len() != 0 {
-		t.Errorf("Len = %d, want 0", s.Len())
+	if _, ok := s.Get("nope"); ok {
+		t.Error("deleting a missing key created it")
 	}
 }
 

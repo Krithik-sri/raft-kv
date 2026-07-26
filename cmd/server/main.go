@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -44,7 +45,17 @@ func main() {
 	addr := flag.String("addr", "", "address this node listens on")
 	peersFlag := flag.String("peers", "", "comma separated peers in id=address format")
 	dataDir := flag.String("data-dir", "data", "directory for persistent raft state")
+	logLevel := flag.String("log-level", "info", "debug, info, warn or error")
 	flag.Parse()
+
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
+		log.Fatalf("bad --log-level %q: %v", *logLevel, err)
+	}
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+	})))
 
 	peers, err := parsePeers(*peersFlag)
 	if err != nil {

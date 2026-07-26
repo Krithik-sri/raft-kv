@@ -72,12 +72,6 @@ func (s *Store) Get(key string) (string, bool) {
 	return value, ok
 }
 
-func (s *Store) Len() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.data)
-}
-
 func (s *Store) Apply(command []byte) ([]byte, error) {
 	var cmd Command
 	if err := json.Unmarshal(command, &cmd); err != nil {

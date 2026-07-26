@@ -57,10 +57,6 @@ func New(addresses []string) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) ID() string {
-	return c.id
-}
-
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -106,18 +102,11 @@ func (c *Client) currentTarget() string {
 	return c.addresses[0]
 }
 
-func (c *Client) rememberLeader(address string) {
+func (c *Client) setLeader(address string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.leader = address
-}
-
-func (c *Client) forgetLeader() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.leader = ""
 }
 
 func (c *Client) nextTarget(current string) string {
@@ -156,7 +145,7 @@ func (c *Client) do(ctx context.Context, fn call) error {
 		redirect, err := fn(service)
 
 		if err != nil {
-			c.forgetLeader()
+			c.setLeader("")
 			target = c.nextTarget(target)
 
 			if err := c.pause(ctx); err != nil {
@@ -166,7 +155,7 @@ func (c *Client) do(ctx context.Context, fn call) error {
 		}
 
 		if redirect == nil {
-			c.rememberLeader(target)
+			c.setLeader(target)
 			return nil
 		}
 
@@ -175,7 +164,7 @@ func (c *Client) do(ctx context.Context, fn call) error {
 			continue
 		}
 
-		c.forgetLeader()
+		c.setLeader("")
 		target = c.nextTarget(target)
 
 		if err := c.pause(ctx); err != nil {
