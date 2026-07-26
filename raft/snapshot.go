@@ -14,12 +14,21 @@ func (r *Raft) needsSnapshot(peerID NodeID) bool {
 }
 
 func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
+	r.mu.Lock()
+
+	if r.state != Leader || r.currentTerm != term {
+		r.mu.Unlock()
+		return
+	}
+
 	data, ok, err := r.storage.LoadSnapshot()
 	if err != nil {
+		r.mu.Unlock()
 		fmt.Printf("node=%s reading snapshot failed: %v\n", r.id, err)
 		return
 	}
 	if !ok {
+		r.mu.Unlock()
 		fmt.Printf(
 			"node=%s peer=%s needs a snapshot but none is stored\n",
 			r.id,
@@ -28,7 +37,6 @@ func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
 		return
 	}
 
-	r.mu.Lock()
 	req := InstallSnapshotRequest{
 		Term:              r.currentTerm,
 		LeaderID:          r.id,
@@ -36,6 +44,7 @@ func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
 		LastIncludedTerm:  r.snapshotTerm,
 		Data:              data,
 	}
+
 	r.mu.Unlock()
 
 	fmt.Printf(
@@ -60,7 +69,7 @@ func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
 		return
 	}
 
-	r.advancePeerProgress(peer.ID, req.LastIncludedIndex)
+	r.advancePeerProgress(peer.ID, req.LastIncludedIndex, term)
 }
 
 func (r *Raft) HandleInstallSnapshot(
@@ -105,6 +114,8 @@ func (r *Raft) HandleInstallSnapshot(
 		return InstallSnapshotResponse{Term: term}
 	}
 
+	defer r.mu.Unlock()
+
 	var retained []LogEntry
 	if existing, ok := r.termAtLocked(req.LastIncludedIndex); ok &&
 		existing == req.LastIncludedTerm {
@@ -113,14 +124,10 @@ func (r *Raft) HandleInstallSnapshot(
 		copy(retained, r.log[offset+1:])
 	}
 
-	r.mu.Unlock()
-
 	if err := r.stateMachine.Restore(req.Data); err != nil {
 		fmt.Printf("node=%s restoring snapshot failed: %v\n", r.id, err)
 		return InstallSnapshotResponse{Term: term}
 	}
-
-	r.mu.Lock()
 
 	err := r.storage.SaveSnapshot(
 		Snapshot{
@@ -134,8 +141,6 @@ func (r *Raft) HandleInstallSnapshot(
 	)
 	if err != nil {
 		fmt.Printf("node=%s persisting snapshot failed: %v\n", r.id, err)
-		r.mu.Unlock()
-
 		return InstallSnapshotResponse{Term: term}
 	}
 
@@ -161,8 +166,6 @@ func (r *Raft) HandleInstallSnapshot(
 		req.LastIncludedTerm,
 		len(retained),
 	)
-
-	r.mu.Unlock()
 
 	r.resetElectionTimer()
 

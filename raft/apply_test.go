@@ -38,6 +38,8 @@ func (m *recordingStateMachine) Restore(data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	m.commands = nil
+
 	return json.Unmarshal(data, &m.commands)
 }
 

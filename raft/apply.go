@@ -18,7 +18,12 @@ func (r *Raft) applyCommitted() {
 
 	r.mu.Lock()
 
-	if r.lastApplied >= r.commitIndex {
+	end := r.commitIndex
+	if last := r.lastLogIndexLocked(); end > last {
+		end = last
+	}
+
+	if r.lastApplied >= end {
 		r.mu.Unlock()
 		return
 	}
@@ -31,9 +36,14 @@ func (r *Raft) applyCommitted() {
 		return
 	}
 
-	pending := make([]LogEntry, r.commitIndex-r.lastApplied)
-	copy(pending, r.log[start:start+len(pending)])
-	r.lastApplied = r.commitIndex
+	count := int(end - r.lastApplied)
+	if start+count > len(r.log) {
+		count = len(r.log) - start
+	}
+
+	pending := make([]LogEntry, count)
+	copy(pending, r.log[start:start+count])
+	r.lastApplied = first + uint64(count) - 1
 
 	r.mu.Unlock()
 
@@ -72,6 +82,9 @@ func (r *Raft) applyCommitted() {
 }
 
 func (r *Raft) maybeSnapshot() {
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
+
 	r.mu.Lock()
 
 	index := r.lastApplied
@@ -102,6 +115,11 @@ func (r *Raft) maybeSnapshot() {
 	}
 
 	offset, ok := r.offsetLocked(index)
+	if !ok {
+		return
+	}
+
+	term, ok = r.termAtLocked(index)
 	if !ok {
 		return
 	}

@@ -66,7 +66,7 @@ func TestAdvanceCommitIndex(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newTestLeader(tt.terms, tt.term)
 
-			r.advancePeerProgress("n2", tt.peerMatch)
+			r.advancePeerProgress("n2", tt.peerMatch, tt.term)
 
 			if r.commitIndex != tt.wantCommit {
 				t.Errorf("commitIndex = %d, want %d", r.commitIndex, tt.wantCommit)
@@ -126,7 +126,10 @@ func TestMakeAppendEntriesRequestFor(t *testing.T) {
 				delete(r.nextIndex, "n2")
 			}
 
-			req := r.makeAppendEntriesRequestFor("n2")
+			req, ok := r.makeAppendEntriesRequestFor("n2", 2)
+			if !ok {
+				t.Fatal("leader refused to build a request for its own term")
+			}
 
 			if req.PrevLogIndex != tt.wantPrevIdx {
 				t.Errorf("PrevLogIndex = %d, want %d", req.PrevLogIndex, tt.wantPrevIdx)
@@ -145,7 +148,10 @@ func TestMakeAppendEntriesRequestForCopiesEntries(t *testing.T) {
 	r := newTestLeader([]uint64{0, 1, 1, 2}, 2)
 	r.nextIndex["n2"] = 1
 
-	req := r.makeAppendEntriesRequestFor("n2")
+	req, ok := r.makeAppendEntriesRequestFor("n2", 2)
+	if !ok {
+		t.Fatal("leader refused to build a request for its own term")
+	}
 	r.log[1].Term = 99
 
 	if req.Entries[0].Term != 1 {

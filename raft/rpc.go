@@ -80,7 +80,10 @@ func (r *Raft) replicateTo(ctx context.Context, peer Peer, term uint64) {
 		return
 	}
 
-	req := r.makeAppendEntriesRequestFor(peer.ID)
+	req, ok := r.makeAppendEntriesRequestFor(peer.ID, term)
+	if !ok {
+		return
+	}
 
 	resp, err := r.transport.AppendEntries(ctx, peer, req)
 
@@ -105,11 +108,11 @@ func (r *Raft) replicateTo(ctx context.Context, peer Peer, term uint64) {
 	}
 
 	if resp.Success {
-		r.advancePeerProgress(peer.ID, req.PrevLogIndex+uint64(len(req.Entries)))
+		r.advancePeerProgress(peer.ID, req.PrevLogIndex+uint64(len(req.Entries)), term)
 		return
 	}
 
-	r.retreatNextIndex(peer.ID)
+	r.retreatNextIndex(peer.ID, term)
 }
 
 func (r *Raft) replicateToAll(ctx context.Context, term uint64) {
@@ -281,6 +284,16 @@ func (r *Raft) HandleAppendEntries(
 
 	if appendFrom >= 0 {
 		fresh := req.Entries[appendFrom:]
+
+		if truncateAt > 0 && truncateAt <= r.lastApplied {
+			fmt.Printf(
+				"node=%s SAFETY: truncation at %d would discard applied entries (lastApplied=%d commitIndex=%d)\n",
+				r.id,
+				truncateAt,
+				r.lastApplied,
+				r.commitIndex,
+			)
+		}
 
 		if truncateAt > 0 {
 			if err := r.storage.TruncateLog(truncateAt); err != nil {

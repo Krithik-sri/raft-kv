@@ -198,9 +198,16 @@ func (r *Raft) makeRequestVoteRequest() RequestVoteRequest {
 	}
 }
 
-func (r *Raft) makeAppendEntriesRequestFor(peerID NodeID) AppendEntriesRequest {
+func (r *Raft) makeAppendEntriesRequestFor(
+	peerID NodeID,
+	term uint64,
+) (AppendEntriesRequest, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.state != Leader || r.currentTerm != term {
+		return AppendEntriesRequest{}, false
+	}
 
 	nextIndex := r.nextIndex[peerID]
 
@@ -223,7 +230,7 @@ func (r *Raft) makeAppendEntriesRequestFor(peerID NodeID) AppendEntriesRequest {
 		PrevLogTerm:  r.log[start-1].Term,
 		Entries:      entries,
 		LeaderCommit: r.commitIndex,
-	}
+	}, true
 }
 
 func (r *Raft) Submit(command []byte) (uint64, uint64, bool) {
@@ -245,9 +252,13 @@ func (r *Raft) Submit(command []byte) (uint64, uint64, bool) {
 	return index, term, true
 }
 
-func (r *Raft) advancePeerProgress(peerID NodeID, matchIndex uint64) {
+func (r *Raft) advancePeerProgress(peerID NodeID, matchIndex, term uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.state != Leader || r.currentTerm != term {
+		return
+	}
 
 	if matchIndex > r.matchIndex[peerID] {
 		r.matchIndex[peerID] = matchIndex
@@ -257,9 +268,13 @@ func (r *Raft) advancePeerProgress(peerID NodeID, matchIndex uint64) {
 	r.advanceCommitIndexLocked()
 }
 
-func (r *Raft) retreatNextIndex(peerID NodeID) {
+func (r *Raft) retreatNextIndex(peerID NodeID, term uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.state != Leader || r.currentTerm != term {
+		return
+	}
 
 	if r.nextIndex[peerID] > 1 {
 		r.nextIndex[peerID]--

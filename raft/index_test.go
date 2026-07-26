@@ -108,9 +108,13 @@ func TestAppendEntriesRequestSlicesFromSnapshotOffset(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newTrimmedRaft(100, 4, []uint64{5, 5, 6})
+			r.state = Leader
 			r.nextIndex["n2"] = tt.nextIndex
 
-			req := r.makeAppendEntriesRequestFor("n2")
+			req, ok := r.makeAppendEntriesRequestFor("n2", 4)
+			if !ok {
+				t.Fatal("leader refused to build a request for its own term")
+			}
 
 			if req.PrevLogIndex != tt.wantPrevIdx {
 				t.Errorf("PrevLogIndex = %d, want %d", req.PrevLogIndex, tt.wantPrevIdx)
@@ -185,7 +189,7 @@ func TestAdvanceCommitIndexWithSnapshot(t *testing.T) {
 	r.currentTerm = 6
 	r.state = Leader
 
-	r.advancePeerProgress("n2", 103)
+	r.advancePeerProgress("n2", 103, 6)
 
 	if r.commitIndex != 103 {
 		t.Errorf("commitIndex = %d, want 103", r.commitIndex)
