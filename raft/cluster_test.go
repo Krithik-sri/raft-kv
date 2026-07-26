@@ -8,40 +8,112 @@ import (
 	"time"
 )
 
-type memTransport struct {
-	mu    sync.Mutex
-	nodes map[NodeID]*Raft
+type memStorage struct {
+	mu       sync.Mutex
+	snapshot []byte
+	present  bool
 }
 
-var _ Transport = (*memTransport)(nil)
+var _ Storage = (*memStorage)(nil)
 
-func newMemTransport() *memTransport {
-	return &memTransport{nodes: make(map[NodeID]*Raft)}
+func (s *memStorage) Load() (PersistentState, error) { return PersistentState{}, nil }
+func (s *memStorage) SaveState(uint64, NodeID) error { return nil }
+func (s *memStorage) AppendLog([]LogEntry) error     { return nil }
+func (s *memStorage) TruncateLog(uint64) error       { return nil }
+
+func (s *memStorage) SaveSnapshot(
+	snapshot Snapshot,
+	term uint64,
+	votedFor NodeID,
+	retained []LogEntry,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.snapshot = snapshot.Data
+	s.present = true
+	return nil
 }
 
-func (t *memTransport) register(id NodeID, node *Raft) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.nodes[id] = node
+func (s *memStorage) LoadSnapshot() ([]byte, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.snapshot, s.present, nil
 }
 
-func (t *memTransport) lookup(id NodeID) (*Raft, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+type memNetwork struct {
+	mu       sync.Mutex
+	nodes    map[NodeID]*Raft
+	blocked  map[NodeID]bool
+	installs int
+}
 
-	node, ok := t.nodes[id]
+func newMemNetwork() *memNetwork {
+	return &memNetwork{
+		nodes:   make(map[NodeID]*Raft),
+		blocked: make(map[NodeID]bool),
+	}
+}
+
+func (n *memNetwork) register(id NodeID, node *Raft) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.nodes[id] = node
+}
+
+func (n *memNetwork) block(id NodeID) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.blocked[id] = true
+}
+
+func (n *memNetwork) unblock(id NodeID) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.blocked, id)
+}
+
+func (n *memNetwork) installCount() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.installs
+}
+
+func (n *memNetwork) countInstall() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.installs++
+}
+
+func (n *memNetwork) route(from, to NodeID) (*Raft, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.blocked[from] || n.blocked[to] {
+		return nil, fmt.Errorf("%s cannot reach %s", from, to)
+	}
+
+	node, ok := n.nodes[to]
 	if !ok {
-		return nil, fmt.Errorf("unknown peer %s", id)
+		return nil, fmt.Errorf("unknown peer %s", to)
 	}
 	return node, nil
 }
+
+type memTransport struct {
+	self NodeID
+	net  *memNetwork
+}
+
+var _ Transport = (*memTransport)(nil)
 
 func (t *memTransport) RequestVote(
 	ctx context.Context,
 	peer Peer,
 	req RequestVoteRequest,
 ) (RequestVoteResponse, error) {
-	node, err := t.lookup(peer.ID)
+	node, err := t.net.route(t.self, peer.ID)
 	if err != nil {
 		return RequestVoteResponse{}, err
 	}
@@ -53,27 +125,43 @@ func (t *memTransport) AppendEntries(
 	peer Peer,
 	req AppendEntriesRequest,
 ) (AppendEntriesResponse, error) {
-	node, err := t.lookup(peer.ID)
+	node, err := t.net.route(t.self, peer.ID)
 	if err != nil {
 		return AppendEntriesResponse{}, err
 	}
 	return node.HandleAppendEntries(req), nil
 }
 
+func (t *memTransport) InstallSnapshot(
+	ctx context.Context,
+	peer Peer,
+	req InstallSnapshotRequest,
+) (InstallSnapshotResponse, error) {
+	node, err := t.net.route(t.self, peer.ID)
+	if err != nil {
+		return InstallSnapshotResponse{}, err
+	}
+
+	t.net.countInstall()
+
+	return node.HandleInstallSnapshot(req), nil
+}
+
 func startCluster(t *testing.T, size int) ([]*Raft, []*recordingStateMachine, context.CancelFunc) {
 	t.Helper()
 
-	return startClusterWithThreshold(t, size, 1<<40)
+	nodes, machines, _, cancel := startClusterWithThreshold(t, size, 1<<40)
+	return nodes, machines, cancel
 }
 
 func startClusterWithThreshold(
 	t *testing.T,
 	size int,
 	threshold uint64,
-) ([]*Raft, []*recordingStateMachine, context.CancelFunc) {
+) ([]*Raft, []*recordingStateMachine, *memNetwork, context.CancelFunc) {
 	t.Helper()
 
-	transport := newMemTransport()
+	network := newMemNetwork()
 
 	ids := make([]NodeID, size)
 	for i := range ids {
@@ -91,7 +179,7 @@ func startClusterWithThreshold(
 		}
 		machines[i] = &recordingStateMachine{}
 
-		node, err := New(id, peers, transport, machines[i], nil)
+		node, err := New(id, peers, &memTransport{self: id, net: network}, machines[i], &memStorage{})
 		if err != nil {
 			t.Fatalf("New %s: %v", id, err)
 		}
@@ -99,7 +187,7 @@ func startClusterWithThreshold(
 		node.snapshotThreshold = threshold
 
 		nodes[i] = node
-		transport.register(id, node)
+		network.register(id, node)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -107,7 +195,7 @@ func startClusterWithThreshold(
 		go node.Start(ctx)
 	}
 
-	return nodes, machines, cancel
+	return nodes, machines, network, cancel
 }
 
 func snapshotLog(r *Raft) []LogEntry {

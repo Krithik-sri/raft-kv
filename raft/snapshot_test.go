@@ -8,7 +8,7 @@ import (
 )
 
 func TestSnapshotTrimsLogAndKeepsBoundary(t *testing.T) {
-	nodes, machines, cancel := startClusterWithThreshold(t, 3, 10)
+	nodes, machines, _, cancel := startClusterWithThreshold(t, 3, 10)
 	defer cancel()
 
 	leader := waitForLeader(t, nodes, 5*time.Second)
@@ -60,7 +60,7 @@ func TestSnapshotTrimsLogAndKeepsBoundary(t *testing.T) {
 }
 
 func TestReplicationContinuesAfterSnapshot(t *testing.T) {
-	nodes, machines, cancel := startClusterWithThreshold(t, 3, 10)
+	nodes, machines, _, cancel := startClusterWithThreshold(t, 3, 10)
 	defer cancel()
 
 	leader := waitForLeader(t, nodes, 5*time.Second)
@@ -162,5 +162,93 @@ func TestSnapshotRetainsUncommittedTail(t *testing.T) {
 	}
 	if got := r.lastLogIndexLocked(); got != 5 {
 		t.Errorf("lastLogIndex = %d, want 5", got)
+	}
+}
+
+func TestLaggingFollowerReceivesSnapshot(t *testing.T) {
+	nodes, machines, network, cancel := startClusterWithThreshold(t, 3, 10)
+	defer cancel()
+
+	leader := waitForLeader(t, nodes, 5*time.Second)
+
+	const commands = 40
+	for i := 0; i < commands; i++ {
+		if _, _, ok := leader.Submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
+			t.Fatalf("submit %d rejected", i)
+		}
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if leader.Status().SnapshotIndex > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if leader.Status().SnapshotIndex == 0 {
+		t.Fatal("leader never snapshotted, cannot exercise InstallSnapshot")
+	}
+
+	var (
+		follower      *Raft
+		followerIndex int
+	)
+	for i, node := range nodes {
+		if node != leader {
+			follower, followerIndex = node, i
+			break
+		}
+	}
+
+	before := network.installCount()
+
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && network.installCount() == before {
+		leader.mu.Lock()
+		leader.nextIndex[follower.id] = 1
+		leader.matchIndex[follower.id] = 0
+		leader.mu.Unlock()
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if network.installCount() == before {
+		t.Fatal("leader never sent InstallSnapshot to a peer behind the snapshot boundary")
+	}
+
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if machines[followerIndex].count() == commands &&
+			follower.Status().LastLogIndex == leader.Status().LastLogIndex {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Errorf("follower applied %d (want %d), lastLogIndex %d (leader %d)",
+		machines[followerIndex].count(), commands,
+		follower.Status().LastLogIndex, leader.Status().LastLogIndex)
+}
+
+func TestNeedsSnapshotOnlyBelowBoundary(t *testing.T) {
+	r := newTrimmedRaft(50, 3, []uint64{3, 3})
+
+	tests := []struct {
+		nextIndex uint64
+		want      bool
+	}{
+		{nextIndex: 1, want: true},
+		{nextIndex: 50, want: true},
+		{nextIndex: 51, want: false},
+		{nextIndex: 52, want: false},
+	}
+
+	for _, tt := range tests {
+		r.nextIndex["n2"] = tt.nextIndex
+
+		if got := r.needsSnapshot("n2"); got != tt.want {
+			t.Errorf("needsSnapshot(nextIndex=%d) = %v, want %v",
+				tt.nextIndex, got, tt.want)
+		}
 	}
 }
