@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/krithik-sri/raft-kv/kvstore"
 	raftpb "github.com/krithik-sri/raft-kv/proto"
 	"github.com/krithik-sri/raft-kv/raft"
+	"github.com/krithik-sri/raft-kv/storage"
 	grpctransport "github.com/krithik-sri/raft-kv/transport/grpc"
 	"google.golang.org/grpc"
 )
@@ -40,6 +43,7 @@ func main() {
 	id := flag.String("id", "", "node ID")
 	addr := flag.String("addr", "", "address this node listens on")
 	peersFlag := flag.String("peers", "", "comma separated peers in id=address format")
+	dataDir := flag.String("data-dir", "data", "directory for persistent raft state")
 	flag.Parse()
 
 	peers, err := parsePeers(*peersFlag)
@@ -54,14 +58,28 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
+		log.Fatalf("failed to create data directory: %v", err)
+	}
+
+	persistence, err := storage.Open(filepath.Join(*dataDir, *id+".log"))
+	if err != nil {
+		log.Fatalf("failed to open storage: %v", err)
+	}
+	defer persistence.Close()
+
 	raftTransport := &grpctransport.Transport{}
 	store := kvstore.New()
-	raftNode := raft.New(
+	raftNode, err := raft.New(
 		raft.NodeID(*id),
 		peers,
 		raftTransport,
 		store,
+		persistence,
 	)
+	if err != nil {
+		log.Fatalf("failed to create raft node: %v", err)
+	}
 
 	grpcServer := grpc.NewServer()
 	server := grpctransport.NewServer(raftNode)
