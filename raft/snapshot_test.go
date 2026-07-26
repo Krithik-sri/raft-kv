@@ -171,24 +171,6 @@ func TestLaggingFollowerReceivesSnapshot(t *testing.T) {
 
 	leader := waitForLeader(t, nodes, 5*time.Second)
 
-	const commands = 40
-	for i := 0; i < commands; i++ {
-		if _, _, ok := leader.Submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
-			t.Fatalf("submit %d rejected", i)
-		}
-	}
-
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if leader.Status().SnapshotIndex > 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if leader.Status().SnapshotIndex == 0 {
-		t.Fatal("leader never snapshotted, cannot exercise InstallSnapshot")
-	}
-
 	var (
 		follower      *Raft
 		followerIndex int
@@ -200,32 +182,41 @@ func TestLaggingFollowerReceivesSnapshot(t *testing.T) {
 		}
 	}
 
-	before := network.installCount()
+	network.block(follower.id)
 
-	deadline = time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) && network.installCount() == before {
-		leader.mu.Lock()
-		leader.nextIndex[follower.id] = 1
-		leader.matchIndex[follower.id] = 0
-		leader.mu.Unlock()
-
-		time.Sleep(5 * time.Millisecond)
+	const commands = 40
+	for i := 0; i < commands; i++ {
+		if _, _, ok := leader.Submit([]byte(fmt.Sprintf("cmd-%d", i))); !ok {
+			t.Fatalf("submit %d rejected", i)
+		}
 	}
 
-	if network.installCount() == before {
-		t.Fatal("leader never sent InstallSnapshot to a peer behind the snapshot boundary")
-	}
-
-	deadline = time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if machines[followerIndex].count() == commands &&
-			follower.Status().LastLogIndex == leader.Status().LastLogIndex {
+		if leader.Status().SnapshotIndex > follower.Status().LastLogIndex {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if leader.Status().SnapshotIndex <= follower.Status().LastLogIndex {
+		t.Fatalf("leader snapshot %d never passed the follower's log end %d",
+			leader.Status().SnapshotIndex, follower.Status().LastLogIndex)
+	}
+
+	before := network.installCount()
+	network.unblock(follower.id)
+
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if network.installCount() > before && machines[followerIndex].count() == commands {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	t.Errorf("follower applied %d (want %d), lastLogIndex %d (leader %d)",
+	t.Errorf("installs %d (was %d), follower applied %d of %d, lastLogIndex %d (leader %d)",
+		network.installCount(), before,
 		machines[followerIndex].count(), commands,
 		follower.Status().LastLogIndex, leader.Status().LastLogIndex)
 }
