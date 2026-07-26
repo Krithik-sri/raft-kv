@@ -20,6 +20,9 @@ type Raft struct {
 	leaderID    NodeID
 	log         []LogEntry
 
+	snapshotIndex uint64
+	snapshotTerm  uint64
+
 	commitIndex uint64
 	lastApplied uint64
 
@@ -129,9 +132,34 @@ func (r *Raft) getStateAndTerm() (State, uint64) {
 	return r.state, r.currentTerm
 }
 
+func (r *Raft) lastLogIndexLocked() uint64 {
+	return r.snapshotIndex + uint64(len(r.log)) - 1
+}
+
+func (r *Raft) offsetLocked(index uint64) (int, bool) {
+	if index < r.snapshotIndex {
+		return 0, false
+	}
+
+	offset := int(index - r.snapshotIndex)
+	if offset >= len(r.log) {
+		return 0, false
+	}
+
+	return offset, true
+}
+
+func (r *Raft) termAtLocked(index uint64) (uint64, bool) {
+	offset, ok := r.offsetLocked(index)
+	if !ok {
+		return 0, false
+	}
+
+	return r.log[offset].Term, true
+}
+
 func (r *Raft) lastLogIndexAndTermLocked() (uint64, uint64) {
-	lastIndex := uint64(len(r.log) - 1)
-	return lastIndex, r.log[lastIndex].Term
+	return r.lastLogIndexLocked(), r.log[len(r.log)-1].Term
 }
 
 func (r *Raft) makeRequestVoteRequest() RequestVoteRequest {
@@ -153,20 +181,24 @@ func (r *Raft) makeAppendEntriesRequestFor(peerID NodeID) AppendEntriesRequest {
 	defer r.mu.Unlock()
 
 	nextIndex := r.nextIndex[peerID]
-	if nextIndex < 1 {
-		nextIndex = 1
+
+	if nextIndex <= r.snapshotIndex {
+		nextIndex = r.snapshotIndex + 1
+	}
+	if last := r.lastLogIndexLocked(); nextIndex > last+1 {
+		nextIndex = last + 1
 	}
 
-	prevLogIndex := nextIndex - 1
+	start := int(nextIndex - r.snapshotIndex)
 
-	entries := make([]LogEntry, uint64(len(r.log))-nextIndex)
-	copy(entries, r.log[nextIndex:])
+	entries := make([]LogEntry, len(r.log)-start)
+	copy(entries, r.log[start:])
 
 	return AppendEntriesRequest{
 		Term:         r.currentTerm,
 		LeaderID:     r.id,
-		PrevLogIndex: prevLogIndex,
-		PrevLogTerm:  r.log[prevLogIndex].Term,
+		PrevLogIndex: nextIndex - 1,
+		PrevLogTerm:  r.log[start-1].Term,
 		Entries:      entries,
 		LeaderCommit: r.commitIndex,
 	}
@@ -214,10 +246,9 @@ func (r *Raft) retreatNextIndex(peerID NodeID) {
 
 func (r *Raft) advanceCommitIndexLocked() {
 	majority := (len(r.peers)+1)/2 + 1
-	lastLogIndex := uint64(len(r.log) - 1)
 
-	for index := lastLogIndex; index > r.commitIndex; index-- {
-		if r.log[index].Term != r.currentTerm {
+	for index := r.lastLogIndexLocked(); index > r.commitIndex; index-- {
+		if term, ok := r.termAtLocked(index); !ok || term != r.currentTerm {
 			continue
 		}
 
