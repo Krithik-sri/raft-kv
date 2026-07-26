@@ -168,6 +168,61 @@ If those numbers were near zero I'd have written a very expensive way of doing n
 
 ---
 
+## Numbers
+
+Five nodes in one process, real gRPC over localhost, real `fsync` to a real SSD. Eight
+concurrent writers, 15 seconds per cluster size. This is a laptop, not a datacentre, so read
+the shape rather than the absolute values.
+
+```
+nodes   writers     writes/s          p50          p95          p99   failed
+3       8              405.8     18.101ms     33.677ms     39.232ms        0
+5       8              400.8     17.911ms     36.888ms     42.118ms        0
+7       8              369.3     18.694ms     36.429ms     47.361ms        0
+
+failover: leader death to the next successful write
+nodes   trials            mean          min          max
+3       1                219ms        219ms        219ms
+5       2                217ms        214ms        221ms
+7       3                234ms        211ms        267ms
+```
+
+```bash
+go run ./cmd/bench --sizes 3,5,7 --writers 8 --duration 15s
+```
+
+**Growing the cluster costs almost nothing.** 406 to 369 writes/s going from three nodes to
+seven. A majority of seven is four, the extra peers are replicated to in parallel, and the
+leader waits on the fastest majority either way. The p99 creeping from 39ms to 47ms is the
+real cost: more nodes, more chances one of them is having a moment.
+
+**Failover lands around 220ms** regardless of size, which is just the election timeout
+(150-300ms randomised) doing its job. Nothing clever, and it doesn't need to be.
+
+**The first benchmark run was embarrassing.** 159 writes/s, identical at every cluster size,
+p50 of 49.98ms. That is not a coincidence: the heartbeat interval is 50ms. Writes were being
+appended to the log and then sitting there doing nothing until the replication ticker
+happened to come round. Every write paid an average of 25ms of pure waiting. The fix is a
+buffered channel that `Propose` pokes so the replication loop wakes immediately instead of on
+the tick, which took about ten lines and roughly doubled throughput.
+
+Worth saying plainly: I would not have found that by reading the code. It only showed up
+because the number was suspiciously round.
+
+**Connection pooling was less exciting.** The Raft transport used to dial and close a gRPC
+connection per RPC (roughly eighty a second at 50ms heartbeats across four peers), which
+looked like an obvious win. Caching one connection per peer moved mean throughput inside the
+noise band, but it cut run-to-run variance a lot: three runs went from 231/241/331 to
+250/255/257. Fewer connections, more predictable latency, no throughput story. Kept it
+anyway, because eighty connections a second to achieve nothing is a bad look.
+
+**p50 of 18ms is mostly disk.** A write is `fsync` on the leader, then `fsync` on each
+follower before it acknowledges, and the leader can't commit until a majority have done that.
+Two serial disk flushes on consumer hardware is basically the whole number. Batching multiple
+pending commands into one `fsync` is the obvious next win and is not implemented.
+
+---
+
 ## Six bugs the chaos tests found, ranked by how bad I felt
 
 Every one of these passed the full unit and integration suite at the time. Every one needs a
@@ -234,10 +289,9 @@ won't transfer. The paper chunks it. I did not.
 snapshot. Real systems expire these on a lease. This one leaks by design, which is a generous
 way of saying I didn't do it.
 
-**Connection reuse in the Raft transport.** It dials and closes a gRPC connection per RPC. At
-50ms heartbeats across four peers that's about eighty connections a second doing nothing
-useful. The client library caches connections properly; the peer transport never got the same
-attention.
+**Batched `fsync`.** Every proposal flushes on its own. Grouping concurrent proposals into one
+disk flush is the obvious next throughput win and the benchmark above says it's worth roughly
+everything.
 
 **Structured logging.** It's `fmt.Printf`. All of it. It was fine at week two and it is not
 fine now.
@@ -269,6 +323,12 @@ One node by hand:
 
 ```bash
 go run ./cmd/server --id node1 --addr localhost:5001 --peers node2=localhost:5002,node3=localhost:5003 --data-dir data
+```
+
+Benchmarks:
+
+```bash
+go run ./cmd/bench --sizes 3,5,7 --writers 8 --duration 15s
 ```
 
 `kvctl` does `get`, `put`, `delete`, `cas`:
