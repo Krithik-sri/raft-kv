@@ -128,6 +128,109 @@ func runThroughput(size, writers int, duration time.Duration) error {
 	return nil
 }
 
+func runReads(size, readers int, duration time.Duration, stale bool) error {
+	c, dataDir, err := newCluster(size)
+	if err != nil {
+		return err
+	}
+	defer c.Stop()
+	defer os.RemoveAll(dataDir)
+
+	if c.WaitForLeader(20*time.Second) == nil {
+		return fmt.Errorf("no leader emerged for a %d node cluster", size)
+	}
+
+	kv, err := client.New(c.Addresses)
+	if err != nil {
+		return err
+	}
+	defer kv.Close()
+
+	seed, cancelSeed := context.WithTimeout(context.Background(), 20*time.Second)
+	for i := 0; i < 50; i++ {
+		if err := kv.Put(seed, fmt.Sprintf("k%d", i), "v"); err != nil {
+			cancelSeed()
+			return fmt.Errorf("seeding: %w", err)
+		}
+	}
+	cancelSeed()
+
+	var opts []client.GetOption
+	if stale {
+		opts = append(opts, client.WithStale())
+	}
+
+	ctx, stop := context.WithCancel(context.Background())
+
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		latencies []time.Duration
+		failed    int
+	)
+
+	start := time.Now()
+
+	for w := 0; w < readers; w++ {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			local := make([]time.Duration, 0, 1024)
+			localFailed := 0
+
+			for seq := 0; ctx.Err() == nil; seq++ {
+				key := fmt.Sprintf("k%d", seq%50)
+
+				callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				began := time.Now()
+				_, _, err := kv.Get(callCtx, key, opts...)
+				elapsed := time.Since(began)
+				cancel()
+
+				if err != nil {
+					if ctx.Err() == nil {
+						localFailed++
+					}
+					continue
+				}
+				local = append(local, elapsed)
+			}
+
+			mu.Lock()
+			latencies = append(latencies, local...)
+			failed += localFailed
+			mu.Unlock()
+		}(w)
+	}
+
+	time.Sleep(duration)
+	stop()
+	wg.Wait()
+
+	elapsed := time.Since(start)
+	slices.Sort(latencies)
+
+	mode := "linearizable"
+	if stale {
+		mode = "stale"
+	}
+
+	fmt.Printf(
+		"%-7d %-14s %10.1f %12s %12s %12s %8d\n",
+		size,
+		mode,
+		float64(len(latencies))/elapsed.Seconds(),
+		percentile(latencies, 0.50).Round(time.Microsecond),
+		percentile(latencies, 0.95).Round(time.Microsecond),
+		percentile(latencies, 0.99).Round(time.Microsecond),
+		failed,
+	)
+
+	return nil
+}
+
 func runFailover(size, trials int) error {
 	c, dataDir, err := newCluster(size)
 	if err != nil {
@@ -230,6 +333,18 @@ func main() {
 	for _, size := range parsed {
 		if err := runThroughput(size, *writers, *duration); err != nil {
 			log.Fatalf("throughput %d nodes: %v", size, err)
+		}
+	}
+
+	fmt.Printf("\nreads: %d concurrent readers, %s per mode\n\n", *writers, *duration)
+	fmt.Printf("%-7s %-14s %10s %12s %12s %12s %8s\n",
+		"nodes", "mode", "reads/s", "p50", "p95", "p99", "failed")
+
+	for _, size := range parsed {
+		for _, stale := range []bool{false, true} {
+			if err := runReads(size, *writers, *duration, stale); err != nil {
+				log.Fatalf("reads %d nodes: %v", size, err)
+			}
 		}
 	}
 

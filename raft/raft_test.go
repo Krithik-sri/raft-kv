@@ -66,7 +66,7 @@ func TestAdvanceCommitIndex(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newTestLeader(tt.terms, tt.term)
 
-			r.advancePeerProgress("n2", tt.peerMatch, tt.term)
+			r.advancePeerProgress("n2", tt.peerMatch, tt.term, 0)
 
 			if r.commitIndex != tt.wantCommit {
 				t.Errorf("commitIndex = %d, want %d", r.commitIndex, tt.wantCommit)

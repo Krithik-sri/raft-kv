@@ -189,7 +189,7 @@ func TestAdvanceCommitIndexWithSnapshot(t *testing.T) {
 	r.currentTerm = 6
 	r.state = Leader
 
-	r.advancePeerProgress("n2", 103, 6)
+	r.advancePeerProgress("n2", 103, 6, 0)
 
 	if r.commitIndex != 103 {
 		t.Errorf("commitIndex = %d, want 103", r.commitIndex)

@@ -24,32 +24,6 @@ func startCluster(t *testing.T, size int) *cluster.Cluster {
 	return c
 }
 
-// getEventually retries because reads are served from the leader's local state
-// machine with no quorum check: a leader that has just been deposed but has not
-// noticed will answer with stale data. Committed writes are never lost, so the
-// value must show up, but not necessarily on the first attempt.
-func getEventually(t *testing.T, kv *Client, key, want string, timeout time.Duration) {
-	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	var last string
-
-	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		value, found, err := kv.Get(ctx, key)
-		cancel()
-
-		if err == nil && found && value == want {
-			return
-		}
-		last = value
-
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	t.Fatalf("Get(%q) = %q, want %q within %s", key, last, want, timeout)
-}
-
 func newTestClient(t *testing.T, addresses []string) *Client {
 	t.Helper()
 
@@ -134,11 +108,79 @@ func TestClientSurvivesLeaderFailure(t *testing.T) {
 
 	c.WaitForLeader(10 * time.Second).Stop()
 
-	getEventually(t, kv, "foo", "bar", 15*time.Second)
+	// Reads are linearizable, so the value has to be there on the first try.
+	// The client retries transport errors internally while it finds the new
+	// leader, but it never hands back a stale answer.
+	value, found, err := kv.Get(ctx, "foo")
+	if err != nil {
+		t.Fatalf("Get after leader failure: %v", err)
+	}
+	if !found || value != "bar" {
+		t.Errorf("Get after leader failure = %q found=%v, want \"bar\" true", value, found)
+	}
 
 	if err := kv.Put(ctx, "foo", "baz"); err != nil {
 		t.Fatalf("Put after leader failure: %v", err)
 	}
 
-	getEventually(t, kv, "foo", "baz", 15*time.Second)
+	value, found, err = kv.Get(ctx, "foo")
+	if err != nil {
+		t.Fatalf("Get after failover write: %v", err)
+	}
+	if !found || value != "baz" {
+		t.Errorf("Get after failover write = %q found=%v, want \"baz\" true", value, found)
+	}
+}
+
+// The point of the read barrier, end to end. Cut the leader off from everyone
+// else and it still thinks it is in charge. A linearizable read has to refuse.
+// A stale read is allowed to answer, and will answer with old data, which is
+// exactly what you asked for by passing WithStale.
+func TestIsolatedLeaderRefusesLinearizableRead(t *testing.T) {
+	c := startCluster(t, 3)
+
+	kv := newTestClient(t, c.Addresses)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := kv.Put(ctx, "foo", "bar"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	leader := c.WaitForStableLeader(15 * time.Second)
+	if leader == nil {
+		t.Fatal("no stable leader")
+	}
+
+	for _, node := range c.Nodes {
+		if node != leader {
+			node.Stop()
+		}
+	}
+
+	// Talk only to the marooned leader.
+	alone, err := New([]string{leader.Address})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer alone.Close()
+
+	readCtx, readCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer readCancel()
+
+	if value, found, err := alone.Get(readCtx, "foo"); err == nil {
+		t.Errorf("isolated leader served a linearizable read: %q found=%v", value, found)
+	}
+
+	staleCtx, staleCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer staleCancel()
+
+	value, found, err := alone.Get(staleCtx, "foo", WithStale())
+	if err != nil {
+		t.Fatalf("stale Get on the isolated leader: %v", err)
+	}
+	if !found || value != "bar" {
+		t.Errorf("stale Get = %q found=%v, want \"bar\" true", value, found)
+	}
 }
