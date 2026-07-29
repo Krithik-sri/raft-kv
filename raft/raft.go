@@ -45,6 +45,10 @@ type Raft struct {
 	readBarrier  uint64
 	ackedBarrier map[NodeID]uint64
 
+	// lastAck is when each peer last answered us. A leader that cannot reach a
+	// majority any more uses this to work out that it is finished.
+	lastAck map[NodeID]time.Time
+
 	electionResetCh chan struct{}
 	applyCh         chan struct{}
 	replicateCh     chan struct{}
@@ -75,6 +79,7 @@ func New(
 		waiters:      make(map[uint64]chan applyOutcome),
 		replicating:  make(map[NodeID]bool),
 		ackedBarrier: make(map[NodeID]uint64),
+		lastAck:      make(map[NodeID]time.Time),
 
 		electionResetCh: make(chan struct{}, 1),
 		applyCh:         make(chan struct{}, 1),
@@ -274,6 +279,7 @@ func (r *Raft) advancePeerProgress(peerID NodeID, matchIndex, term, barrier uint
 	if barrier > r.ackedBarrier[peerID] {
 		r.ackedBarrier[peerID] = barrier
 	}
+	r.lastAck[peerID] = time.Now()
 
 	r.advanceCommitIndexLocked()
 	r.notifyProgressLocked()
@@ -335,6 +341,35 @@ func (r *Raft) advanceCommitIndexLocked() {
 	}
 }
 
+// hasQuorumRecently reports whether a majority has answered us lately.
+//
+// This is CheckQuorum. Being leader is a claim, not a fact: a node that has
+// been cut off keeps believing it until somebody tells it otherwise, and
+// nobody can, because it is cut off. So it has to notice by itself.
+//
+// The window is a full election timeout. By then any follower that could hear
+// us would have answered, and any follower that couldn't is off holding its
+// own election.
+func (r *Raft) hasQuorumRecently() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.state != Leader {
+		return true
+	}
+
+	cutoff := time.Now().Add(-maxElectionTimeout)
+
+	reachable := 1
+	for _, peer := range r.peers {
+		if r.lastAck[peer.ID].After(cutoff) {
+			reachable++
+		}
+	}
+
+	return reachable >= r.majority()
+}
+
 func (r *Raft) isLeaderForTerm(term uint64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -390,6 +425,13 @@ func (r *Raft) becomeLeader(term uint64) bool {
 
 	r.state = Leader
 	r.leaderID = r.id
+
+	// Nobody has answered this term yet. Without this, the quorum check below
+	// would depose the leader the instant it was elected.
+	now := time.Now()
+	for _, peer := range r.peers {
+		r.lastAck[peer.ID] = now
+	}
 
 	lastLogIndex, _ := r.lastLogIndexAndTermLocked()
 	for _, peer := range r.peers {
