@@ -49,9 +49,15 @@ type Raft struct {
 	// majority any more uses this to work out that it is finished.
 	lastAck map[NodeID]time.Time
 
+	// persistedIndex is the highest log index known to be on disk. The log in
+	// memory runs ahead of it, which is the entire point, and is also why the
+	// leader may not count itself towards a majority above it.
+	persistedIndex uint64
+
 	electionResetCh chan struct{}
 	applyCh         chan struct{}
 	replicateCh     chan struct{}
+	persistCh       chan struct{}
 	progressCh      chan struct{}
 }
 
@@ -84,6 +90,7 @@ func New(
 		electionResetCh: make(chan struct{}, 1),
 		applyCh:         make(chan struct{}, 1),
 		replicateCh:     make(chan struct{}, 1),
+		persistCh:       make(chan struct{}, 1),
 		progressCh:      make(chan struct{}),
 	}
 
@@ -101,6 +108,7 @@ func New(
 
 	r.log = []LogEntry{{Term: state.SnapshotTerm}}
 	r.log = append(r.log, state.Log...)
+	r.persistedUpToLocked()
 
 	data, ok, err := storage.LoadSnapshot()
 	if err != nil {
@@ -139,6 +147,7 @@ func (s State) String() string {
 
 func (r *Raft) Start(ctx context.Context) {
 	go r.runApplyLoop(ctx)
+	go r.runPersistLoop(ctx)
 	r.runElectionTimer(ctx)
 }
 
@@ -324,7 +333,14 @@ func (r *Raft) advanceCommitIndexLocked() {
 			continue
 		}
 
-		count := 1
+		// Our own copy only counts once it is durable. Counting it earlier
+		// lets a crash turn the majority that committed this entry into a
+		// minority, which loses acknowledged writes.
+		count := 0
+		if r.persistedIndex >= index {
+			count = 1
+		}
+
 		for _, peer := range r.peers {
 			if r.matchIndex[peer.ID] >= index {
 				count++
@@ -418,11 +434,6 @@ func (r *Raft) becomeLeader(term uint64) bool {
 
 	noop := LogEntry{Term: r.currentTerm}
 
-	if err := r.storage.AppendLog([]LogEntry{noop}); err != nil {
-		r.logger.Error("failed persisting leader no-op", "err", err)
-		return false
-	}
-
 	r.state = Leader
 	r.leaderID = r.id
 
@@ -440,6 +451,7 @@ func (r *Raft) becomeLeader(term uint64) bool {
 	}
 
 	r.log = append(r.log, noop)
+	r.signalPersist()
 
 	return true
 }

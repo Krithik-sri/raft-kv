@@ -65,11 +65,8 @@ func (r *Raft) signalReplicate() {
 func (r *Raft) appendCommandLocked(command []byte) (uint64, uint64, error) {
 	entry := LogEntry{Term: r.currentTerm, Command: command}
 
-	if err := r.storage.AppendLog([]LogEntry{entry}); err != nil {
-		return 0, 0, err
-	}
-
 	r.log = append(r.log, entry)
+	r.signalPersist()
 	r.signalReplicate()
 
 	return r.lastLogIndexLocked(), r.currentTerm, nil
