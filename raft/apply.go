@@ -39,8 +39,6 @@ func (r *Raft) applyCommitted() {
 	count := min(int(end-r.lastApplied), len(r.log)-start)
 
 	pending := slices.Clone(r.log[start : start+count])
-	r.lastApplied = first + uint64(count) - 1
-	r.notifyProgressLocked()
 
 	r.mu.Unlock()
 
@@ -66,6 +64,11 @@ func (r *Raft) applyCommitted() {
 
 		r.logger.Debug("applied", "index", index, "term", entry.Term)
 	}
+
+	r.mu.Lock()
+	r.lastApplied = first + uint64(len(pending)) - 1
+	r.notifyProgressLocked()
+	r.mu.Unlock()
 }
 
 func (r *Raft) maybeSnapshot() {
@@ -126,6 +129,7 @@ func (r *Raft) maybeSnapshot() {
 	r.log = append([]LogEntry{{Term: term}}, retained...)
 	r.snapshotIndex = index
 	r.snapshotTerm = term
+	r.persistedUpToLocked()
 
 	r.logger.Info("snapshot taken", "index", index, "term", term, "retained", len(retained))
 }

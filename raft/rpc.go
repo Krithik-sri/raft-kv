@@ -346,6 +346,8 @@ func (r *Raft) HandleAppendEntries(
 		} else {
 			r.log = append(r.log, fresh...)
 		}
+
+		r.persistedUpToLocked()
 	}
 
 	if req.LeaderCommit > r.commitIndex {

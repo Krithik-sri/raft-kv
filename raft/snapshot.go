@@ -141,6 +141,7 @@ func (r *Raft) HandleInstallSnapshot(
 	r.log = append([]LogEntry{{Term: req.LastIncludedTerm}}, retained...)
 	r.snapshotIndex = req.LastIncludedIndex
 	r.snapshotTerm = req.LastIncludedTerm
+	r.persistedUpToLocked()
 
 	r.commitIndex = max(r.commitIndex, req.LastIncludedIndex)
 	r.lastApplied = max(r.lastApplied, req.LastIncludedIndex)
