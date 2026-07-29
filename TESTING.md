@@ -1,9 +1,9 @@
-# How i test it, and the six bugs that i found
+# How i test it, and the seven bugs that i found
 
 Back to the [README](README.md).
 
 ```bash
-go test ./...                                       # 86 tests
+go test ./...                                       # 88 tests
 ./scripts/crash-test.sh                             # kills nodes with -9
 ./scripts/chaos-sweep.sh --seeds 20                 # breaks the network
 go test ./raft/ -run TestChaos -chaos.duration=30m  # the long one
@@ -101,10 +101,10 @@ then testing the checker separately, is what turned it into evidence.
 
 ---
 
-# The six bugs
+# The seven bugs
 
-Every one of these passed all the tests I had at the time. Every one needed a network split, a
-snapshot, and an election happening at the same moment. None of them crashed. None returned an
+Every one of these passed all the tests I had at the time. The first six needed a network split,
+a snapshot, and an election happening at the same moment. None of them crashed. None returned an
 error. They corrupted data and let me carry on.
 
 I've ordered them by how bad I felt.
@@ -160,6 +160,28 @@ Anything that arrived during the restore got silently erased.
 `maybeSnapshot` serialised the state machine while something else could be replacing it.
 Contents from one moment, label from another. Same joke as bug 1, different function.
 
+### 7. Saying a write was applied before applying it
+
+This one is months newer than the other six, and I wrote it while adding linearizable reads.
+
+A linearizable read waits for the state machine to catch up to a particular index before it
+answers. `applyCommitted` moved that index to the end of the batch *first*, then went off and
+applied the entries. So the read was waiting on a number rather than on the data, and the number
+arrived early.
+
+A client would write a value, get a confirmation, read it back, and be told it didn't exist.
+Which is the exact thing the read barrier had just been built to prevent.
+
+It showed up as a test that failed about one run in eight. I had run that test hundreds of times
+across three phases without seeing it.
+
+The fix is to move the index after the applies. `applyMu` already stops two appliers running at
+once, so claiming the range up front was buying nothing in the first place.
+
+Two things worth saying about this one. It is the same mistake as the other five, made by
+someone who had just spent a week writing about that mistake. And I only found it because a
+flaky test annoyed me enough to chase it instead of re-running it.
+
 ---
 
 Bug 2 got caught by an assertion I left in the code. If a truncation would ever throw away an
@@ -169,9 +191,12 @@ It should never appear. If it does, committed data is already gone, and I'd rath
 right then than reverse-engineer it three hours later from `applied=115` on one machine and
 `applied=116` on another.
 
-Five of the six are the same mistake wearing different clothes: let go of a lock partway
+Six of the seven are the same mistake wearing different clothes: let go of a lock partway
 through, then keep using something you read before you let go. If you take one thing away from
 this repo, take that.
+
+Bug 7 is the same mistake again, made after I had written that paragraph. Draw your own
+conclusions.
 
 ---
 
@@ -187,7 +212,9 @@ Turned out the read was landing on a *different* stale leader, which answered "n
 total confidence. That was the stale-read problem working exactly as designed, and the test was
 asserting something the system didn't promise. So I loosened it to wait for the value instead.
 
-It's since been tightened back up. The read barrier means the system now does promise it.
+It's since been tightened back up, because the read barrier means the system does promise it
+now. And then it started failing again, roughly one run in eight, and that time it was right.
+That's bug 7 above. A test I had twice dismissed as too strict was correct on both counts.
 
 **"Some messages got dropped."** A test set a 30% drop rate and then checked that drops had
 happened. With few enough messages, 30% can legitimately drop nothing. I replaced it with a

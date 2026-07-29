@@ -3,7 +3,7 @@
 A key-value store that runs across five machines and keeps your data when one of them dies.
 
 I built this to learn Raft. Raft is the algorithm that makes those five machines agree on
-things. It turns out to be much harder than it looks. I got it wrong six times, and the only
+things. It turns out to be much harder than it looks. I got it wrong seven times, and the only
 reason I know that is a test harness that spends all day breaking the cluster on purpose.
 
 ```bash
@@ -34,19 +34,21 @@ linearizability, but that never leaves the test build.
 | | |
 |---|---|
 | [DESIGN.md](DESIGN.md) | how it works, why I made each choice, and everything it still can't do |
-| [TESTING.md](TESTING.md) | how I test it, the six bugs that found, and the linearizability checker |
+| [TESTING.md](TESTING.md) | how I test it, the seven bugs that found, and the linearizability checker |
 | [BENCHMARKS.md](BENCHMARKS.md) | how fast it is, plus the time I made it faster and broke it |
 
 ## How fast
 
 ```
             writes/s   p50      reads/s   p50      failover
-3 nodes     422        17.6ms   14092     524us    211ms
-5 nodes     402        18.3ms   13139     530us    264ms
-7 nodes     395        18.3ms   12488     562us    209ms
+3 nodes     393        18.1ms   13510     522us    229ms
+5 nodes     357        20.5ms   12996     528us    225ms
+7 nodes     347        21.3ms   10821     554us    240ms
 ```
 
-Adding machines barely slows it down. The 17ms on writes is almost entirely waiting for disks.
+Adding machines barely slows it down. The 18ms on writes is almost entirely waiting for disks,
+even after I taught it to share a disk flush between concurrent writes. That change roughly
+doubled write throughput and the disk is still the expensive part.
 
 Reads are much cheaper than writes because nothing has to be written down. They still cost
 about half a millisecond, because a read checks that this node really is still the leader
@@ -56,23 +58,21 @@ but the answer might be out of date.
 "Failover" is how long you wait after the leader dies before writes work again. About a fifth
 of a second.
 
-## The six bugs
+## The seven bugs
 
-All six passed every test I had written at the time. All six needed three things to go wrong at
-once: a network split, a snapshot, and an election. None of them crashed or returned an error.
-They just quietly corrupted data and let me carry on.
+All seven passed every test I had written at the time. Six of them needed three things to go
+wrong at once: a network split, a snapshot, and an election. None of them crashed or returned an
+error. They just quietly corrupted data and let me carry on.
 
-Five of the six were the same mistake in a different outfit. I'd unlock a mutex halfway through
-doing something, then keep using a value I'd read before letting go.
+Six of the seven were the same mistake in a different outfit. I'd unlock a mutex halfway through
+doing something, then keep using a value I'd read before letting go. I wrote the seventh one
+this month, months after learning that lesson, which tells you how much a lesson is worth.
 
 Full write-ups in [TESTING.md](TESTING.md). They're the best part of this repo.
 
 ## What it can't do
 
 Snapshots go over the wire in one message, so a big state machine won't transfer at all.
-
-Every write flushes to disk on its own. Batching them together is the obvious next speedup and
-I haven't done it.
 
 You can't add or remove machines while it's running. The list is fixed at startup.
 
@@ -84,7 +84,7 @@ You need Go 1.26 or newer.
 
 ```bash
 go build ./...
-go test ./...                              # 86 tests
+go test ./...                              # 88 tests
 ./scripts/crash-test.sh                    # kills nodes with -9, over and over
 ./scripts/chaos-sweep.sh --seeds 20        # breaks the network, checks nothing broke
 ./scripts/start-cluster.sh                 # five nodes, Ctrl-C to stop

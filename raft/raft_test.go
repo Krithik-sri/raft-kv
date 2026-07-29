@@ -16,6 +16,7 @@ func newTestLeader(terms []uint64, currentTerm uint64) *Raft {
 		entries[i] = LogEntry{Term: term}
 	}
 	r.log = entries
+	r.persistedUpToLocked()
 
 	for _, peer := range peers {
 		r.nextIndex[peer.ID] = uint64(len(entries))

@@ -7,33 +7,39 @@ once, 15 seconds per cluster size. This is a laptop, not a data centre, so pay a
 shape rather than the absolute numbers.
 
 ```bash
-go run ./cmd/bench --sizes 3,5,7 --writers 8 --duration 15s
+go run ./cmd/bench --sizes 3 --writers 8 --duration 15s
 ```
+
+One cluster size per run. See [how I measure](#how-i-measure) for why that matters more than
+you'd think.
 
 ```
 writes
 nodes   writers     writes/s          p50          p95          p99   failed
-3       8              422.2      17.62ms     30.229ms     37.069ms        0
-5       8              402.3      18.28ms     30.823ms     37.379ms        0
-7       8              395.5     18.334ms     30.649ms     38.161ms        0
+3       8              393.1     18.078ms     39.691ms     53.601ms        0
+5       8              357.1     20.471ms     42.628ms     54.411ms        0
+7       8              346.7      21.26ms     40.984ms     57.854ms        0
 
 reads
 nodes   mode              reads/s          p50          p95          p99   failed
-3       linearizable      14092.0        524us      1.112ms      2.002ms        0
-3       stale             18337.1           0s        613us     12.095ms        0
-5       linearizable      13139.4        530us      1.505ms      2.023ms        0
-5       stale             20138.9           0s        599us      11.37ms        0
-7       linearizable      12488.0        562us      1.507ms      2.013ms        0
-7       stale             20021.7           0s        607us     11.443ms        0
+3       linearizable      13510.2        522µs      1.156ms      2.508ms        0
+3       stale             21116.3           0s        799µs      6.524ms        0
+5       linearizable      12996.5        528µs      1.504ms      2.192ms        0
+5       stale             20951.5           0s        996µs       7.36ms        0
+7       linearizable      10820.9        554µs      1.996ms      3.137ms        0
+7       stale             20953.9           0s        731µs      7.519ms        0
 
 failover: leader dies, how long until the next write works
 nodes   trials            mean          min          max
-3       1                211ms        211ms        211ms
-5       2                264ms        213ms        315ms
-7       3                209ms        207ms        211ms
+3       1                229ms        229ms        229ms
+5       2                225ms        223ms        226ms
+7       3                240ms        215ms        277ms
 ```
 
-**More machines barely costs anything.** 422 down to 395 going from three to seven. That
+Those write numbers are lower than the ones this file used to show, and the code got roughly
+twice as fast in between. Both statements are true. Read [how I measure](#how-i-measure).
+
+**More machines barely costs anything.** 393 down to 347 going from three to seven. That
 surprised me at first, but it makes sense. A majority of seven is four. The leader sends to
 everyone at once and only waits for the fastest four. The extra machines are just... there.
 
@@ -41,11 +47,11 @@ everyone at once and only waits for the fastest four. The extra machines are jus
 clever. Each node waits a random 150-300ms before deciding the leader is gone, so somebody
 notices quickly and the rest fall in line.
 
-**Writes are 17ms and that's disk.** A write gets flushed on the leader, then flushed on each
-follower, and the leader can't call it done until a majority have finished. Two flushes back to
-back on a normal SSD is basically the whole number.
+**Writes are 18ms and that's still disk.** A write gets flushed on the leader, then flushed on
+each follower, and the leader can't call it done until a majority have finished. Two flushes
+back to back on a normal SSD is basically the whole number.
 
-Batching several pending writes into one flush is the obvious next win. Haven't done it.
+It used to be two flushes *per write*. Now the leader's half is shared. See below.
 
 **Reads cost about half a millisecond.** Which is a lot cheaper than I expected.
 
@@ -59,6 +65,62 @@ so eight concurrent readers pay for roughly one exchange between them rather tha
 and you get about 40% more throughput. Its p99 is *worse* than the linearizable one, which
 looks backwards until you realise stale reads have no waiting in them to smooth things out, so
 they feel every GC pause directly.
+
+## Batching the flushes
+
+The old code flushed the leader's log to disk once per write. Eight writers meant eight flushes,
+one after another, each waiting its turn.
+
+Before changing anything I measured the ceiling. I ripped the flush out entirely, which is wildly
+unsafe and completely fine for ten minutes, and ran the benchmark again.
+
+- a flush per write: 395 writes/s, p50 18.4ms
+- no flush at all: 2688 writes/s, p50 550µs
+
+So the disk was about 85% of a write. Worth fixing.
+
+My plan was to batch inside the storage layer, where `AppendLog` could collect a few callers'
+bytes and flush them together. Raft wouldn't have to know anything about it.
+
+That plan was nonsense, and I only found out because I checked before writing it. Raft holds its
+lock across every storage call, so storage never sees two callers at once. I added a counter to
+be sure: peak concurrent callers on a single file was 1, over about four thousand appends. A
+batching layer down there would have spent its life batching one thing at a time.
+
+So it had to move up into raft. Entries go into the log in memory, and a loop flushes whatever
+has piled up since the last one. Writes that arrive mid-flush queue behind it and go out
+together in the next. Eight writers, one flush.
+
+The part that needs care is the commit rule. An entry now exists in memory before it exists on
+disk, so the leader is not allowed to count its own copy towards a majority until the flush
+covering it has finished. Skip that and a crash turns the majority that committed a write into a
+minority, and the write is gone. One line, unusually bad failure mode, its own test.
+
+Alternating runs, same sitting, three nodes:
+
+- before: 229, 224, 229 writes/s, p50 around 32ms
+- after: 406, 408, 392 writes/s, p50 around 18ms
+
+Call it 1.8x. Not the 6.4x the ceiling promised, because the followers still flush once per batch
+and somebody still has to send the messages. The disk just isn't the whole story any more.
+
+## How i measure
+
+This laptop is not a reliable instrument. Same binary, same benchmark, same everything: 229
+writes/s one minute and 355 the next. Nothing changed except the machine's mood.
+
+Two habits came out of that.
+
+**One cluster size per process.** Running `--sizes 3,5,7` in one go used to produce clean
+evidence that seven nodes are faster than three, which is nonsense. Whatever runs later in a
+process runs faster. Each size gets its own run now.
+
+**Compare two builds by alternating them.** Old, new, old, new, same sitting. The absolute
+numbers still wander but the ratio between two builds measured seconds apart holds still. The
+1.8x above is four rounds of that, and every round landed between 1.79 and 1.90.
+
+If I'd measured the old build on Monday and the new one on Tuesday, I could have proven whatever
+I felt like. In either direction.
 
 ## A correction
 

@@ -150,6 +150,19 @@ whole cluster.
 The test for this used to hang for twenty seconds before I gave up and killed it. Now it passes
 in 0.3 seconds.
 
+**Several writes share one flush to disk.** Flushing once per write made the disk about 85% of
+a write's cost. Now entries go into the log in memory and a loop flushes whatever has piled up,
+so writes that arrive together pay for one flush between them.
+
+The price is a rule that has to be exactly right. An entry now exists in memory before it exists
+on disk, so a leader may not count its own copy towards a majority until the flush covering it
+has finished. Counting early would let a crash turn the majority that committed a write into a
+minority, and the write would be gone. Followers still flush before they answer, so their acks
+mean what they always meant.
+
+It's worth about 1.8x. Numbers and the ceiling I measured first are in
+[BENCHMARKS.md](BENCHMARKS.md).
+
 **Duplicate detection lives in the state machine, not the server.** Every machine replays the
 same log, so they all have to agree on what counts as a duplicate. If the leader skips a retry
 and the followers apply it, they've drifted apart and nothing tells you.
@@ -189,12 +202,9 @@ didn't.
 them all into every snapshot. Real systems expire these. Mine doesn't, which is a polite way of
 saying I skipped it.
 
-**Every write flushes to disk on its own.** Batching several writes into one flush is the
-obvious next speedup, and the benchmark says it's worth a lot.
-
 **You can't change the cluster membership.** The machine list is fixed at startup. Adding and
 removing nodes safely is §6 of the paper and it isn't here.
 
 **I've never run the race detector.** It needs a C compiler and there isn't one on this laptop.
-Five of my six bugs were mutex mistakes. So the race detector is far and away the most useful
+Six of my seven bugs were mutex mistakes. So the race detector is far and away the most useful
 thing missing from this repo, and yes, I do see the irony.

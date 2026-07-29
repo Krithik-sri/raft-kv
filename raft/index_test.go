@@ -18,6 +18,7 @@ func newTrimmedRaft(snapshotIndex, snapshotTerm uint64, terms []uint64) *Raft {
 	for _, term := range terms {
 		r.log = append(r.log, LogEntry{Term: term})
 	}
+	r.persistedUpToLocked()
 
 	return r
 }
