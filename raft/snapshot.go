@@ -41,6 +41,7 @@ func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
 		LastIncludedIndex: r.snapshotIndex,
 		LastIncludedTerm:  r.snapshotTerm,
 		Data:              data,
+		Config:            r.baseConfig,
 	}
 
 	r.mu.Unlock()
@@ -143,7 +144,13 @@ func (r *Raft) HandleInstallSnapshot(
 	r.snapshotIndex = req.LastIncludedIndex
 	r.snapshotTerm = req.LastIncludedTerm
 	r.persistedUpToLocked()
-	r.baseConfig = r.config
+
+	// The membership arrives with the snapshot. The entry that would have told
+	// us about it may well be inside the snapshot we just installed.
+	if len(req.Config.Members) > 0 {
+		r.baseConfig = req.Config
+	}
+	r.refreshConfigLocked(r.baseConfig, r.snapshotIndex)
 
 	r.commitIndex = max(r.commitIndex, req.LastIncludedIndex)
 	r.lastApplied = max(r.lastApplied, req.LastIncludedIndex)

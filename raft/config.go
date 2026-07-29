@@ -70,7 +70,7 @@ func configurationFromPeers(self NodeID, address string, peers []Peer) Configura
 	return Configuration{Members: members}
 }
 
-func encodeConfiguration(c Configuration) ([]byte, error) {
+func EncodeConfiguration(c Configuration) ([]byte, error) {
 	data, err := json.Marshal(c)
 	if err != nil {
 		return nil, fmt.Errorf("encode configuration: %w", err)
@@ -78,7 +78,7 @@ func encodeConfiguration(c Configuration) ([]byte, error) {
 	return data, nil
 }
 
-func decodeConfiguration(data []byte) (Configuration, error) {
+func DecodeConfiguration(data []byte) (Configuration, error) {
 	var c Configuration
 	if err := json.Unmarshal(data, &c); err != nil {
 		return Configuration{}, fmt.Errorf("decode configuration: %w", err)
@@ -121,6 +121,32 @@ func (r *Raft) adoptConfigLocked(config Configuration, index uint64) {
 	}
 }
 
+// configAsOfLocked is the membership as it stood at the given index. That is
+// not the same as the current one: a configuration change that has been
+// appended but not committed lives above the commit point, and a snapshot must
+// not claim it.
+func (r *Raft) configAsOfLocked(index uint64) Configuration {
+	config := r.baseConfig
+
+	for offset, entry := range r.log {
+		if offset == 0 || entry.Kind != EntryConfig {
+			continue
+		}
+		if r.snapshotIndex+uint64(offset) > index {
+			break
+		}
+
+		decoded, err := DecodeConfiguration(entry.Command)
+		if err != nil {
+			continue
+		}
+
+		config = decoded
+	}
+
+	return config
+}
+
 // refreshConfigLocked walks the log for the newest configuration entry and
 // adopts it. Used on startup and after the log is repaired by a truncation,
 // which can take a configuration back out again.
@@ -132,7 +158,7 @@ func (r *Raft) refreshConfigLocked(base Configuration, baseIndex uint64) {
 			continue
 		}
 
-		decoded, err := decodeConfiguration(entry.Command)
+		decoded, err := DecodeConfiguration(entry.Command)
 		if err != nil {
 			r.logger.Error("ignoring unreadable configuration entry", "err", err)
 			continue
