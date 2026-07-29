@@ -8,12 +8,12 @@ func TestConfigurationRoundTrips(t *testing.T) {
 		{ID: "n2", Address: "localhost:2", Voter: false},
 	}}
 
-	encoded, err := encodeConfiguration(want)
+	encoded, err := EncodeConfiguration(want)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
 
-	got, err := decodeConfiguration(encoded)
+	got, err := DecodeConfiguration(encoded)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestLogConfigurationWinsOverBootstrap(t *testing.T) {
 		{ID: "n3", Voter: true},
 	}}
 
-	encoded, err := encodeConfiguration(added)
+	encoded, err := EncodeConfiguration(added)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestConfigEntriesNeverReachTheStateMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	encoded, err := encodeConfiguration(Configuration{Members: []Member{{ID: "n1", Voter: true}}})
+	encoded, err := EncodeConfiguration(Configuration{Members: []Member{{ID: "n1", Voter: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}

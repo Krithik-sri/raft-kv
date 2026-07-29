@@ -44,7 +44,7 @@ func (r *Raft) applyCommitted() {
 
 	for offset, entry := range pending {
 		index := first + uint64(offset)
-		
+
 		if entry.Kind != EntryCommand || len(entry.Command) == 0 {
 			continue
 		}
@@ -127,11 +127,15 @@ func (r *Raft) maybeSnapshot() {
 		return
 	}
 
+	// Work out the configuration as of the snapshot point before the entries
+	// that prove it get thrown away.
+	base := r.configAsOfLocked(index)
+
 	r.log = append([]LogEntry{{Term: term}}, retained...)
 	r.snapshotIndex = index
 	r.snapshotTerm = term
 	r.persistedUpToLocked()
-	r.baseConfig = r.config
+	r.baseConfig = base
 
 	r.logger.Info("snapshot taken", "index", index, "term", term, "retained", len(retained))
 }

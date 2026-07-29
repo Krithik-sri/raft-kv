@@ -64,12 +64,22 @@ func (s *Server) InstallSnapshot(
 	req *raftpb.InstallSnapshotRequest,
 ) (*raftpb.InstallSnapshotResponse, error) {
 
+	var config raft.Configuration
+	if len(req.Config) > 0 {
+		decoded, err := raft.DecodeConfiguration(req.Config)
+		if err != nil {
+			return nil, err
+		}
+		config = decoded
+	}
+
 	resp := s.node.HandleInstallSnapshot(raft.InstallSnapshotRequest{
 		Term:              req.Term,
 		LeaderID:          raft.NodeID(req.LeaderId),
 		LastIncludedIndex: req.LastIncludedIndex,
 		LastIncludedTerm:  req.LastIncludedTerm,
 		Data:              req.Data,
+		Config:            config,
 	})
 
 	slog.Debug("received InstallSnapshot", "leader", req.LeaderId, "index", req.LastIncludedIndex)

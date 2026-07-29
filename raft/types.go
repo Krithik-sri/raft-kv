@@ -76,6 +76,12 @@ type InstallSnapshotRequest struct {
 	LastIncludedIndex uint64
 	LastIncludedTerm  uint64
 	Data              []byte
+
+	// Config is the membership as of LastIncludedIndex. It has to travel with
+	// the snapshot: the configuration entry that added the receiving machine
+	// may be buried inside the snapshot, in which case replaying the log will
+	// never show it who its peers are.
+	Config Configuration
 }
 
 type InstallSnapshotResponse struct {

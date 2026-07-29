@@ -84,6 +84,14 @@ func (t *Transport) InstallSnapshot(
 		Data:              req.Data,
 	}
 
+	if len(req.Config.Members) > 0 {
+		encoded, err := raft.EncodeConfiguration(req.Config)
+		if err != nil {
+			return raft.InstallSnapshotResponse{}, err
+		}
+		pbReq.Config = encoded
+	}
+
 	client, err := t.clientFor(peer.Address)
 	if err != nil {
 		return raft.InstallSnapshotResponse{}, err
