@@ -56,6 +56,7 @@ cluster starts in about a millisecond, which is why the chaos tests can run hund
 | `transport/grpc` | Turning Raft types into protobuf and back |
 | `client` | Finds the leader, follows redirects, retries |
 | `internal/cluster` | Starts a real cluster in one process. Shared by the benchmark and the tests |
+| `internal/linearizability` | The model the checker compares recorded histories against |
 | `cmd/server`, `cmd/kvctl`, `cmd/bench` | Things you can run |
 
 ---

@@ -3,7 +3,7 @@
 Back to the [README](README.md).
 
 ```bash
-go test ./...                                       # 66 tests
+go test ./...                                       # 80 tests
 ./scripts/crash-test.sh                             # kills nodes with -9
 ./scripts/chaos-sweep.sh --seeds 20                 # breaks the network
 go test ./raft/ -run TestChaos -chaos.duration=30m  # the long one
@@ -12,7 +12,7 @@ go test ./raft/ -run TestChaos -chaos.duration=30m  # the long one
 Every script has a `.ps1` twin if you're on Windows
 (`scripts/crash-test.ps1 -Iterations 20`).
 
-There are four layers. Each one catches things the layer below it can't.
+There are five layers. Each one catches things the layer below it can't.
 
 ## Unit tests
 
@@ -67,6 +67,37 @@ built a very slow way of doing nothing.
 Run the sweep, not one seed. The seed controls the order faults happen in, but it doesn't
 control goroutine timing. A seed that passes once can fail on the third run. I learned that
 the slow way.
+
+## Linearizability checking
+
+The chaos tests ask "did the machines agree with each other". This asks a harder question: could
+a single machine, with no network and no replication, have produced the answers my clients
+actually saw?
+
+Every operation gets recorded with the time it was sent and the time it came back. Then
+[Porcupine](https://github.com/anishathalye/porcupine) searches for an ordering that explains
+all of them. If there isn't one, the cluster told two callers contradictory things.
+
+`TestLinearizabilityUnderPartitions` in the raft package is the one that matters. Four callers,
+five nodes, and a fault injector repeatedly stranding the leader on the minority side. About
+1,800 operations per run, checked against a single-key model.
+
+There's also a version driving the real gRPC stack in the client package. It kills leaders
+rather than partitioning them, because those are real servers on real ports and I can't cut one
+off while leaving it running. So it covers the layers above raft, redirects and retries and
+duplicate detection, and not the stale-leader case.
+
+**The checker is itself tested**, which matters more than it sounds. A checker that never
+rejects anything looks exactly like a passing test suite. `internal/linearizability` feeds it
+histories with known answers: a stale read, a write that vanished, a compare-and-swap that
+claims to have succeeded when it can't have. It has to reject all three. It also has to *accept*
+overlapping operations and operations whose outcome we never learned, or every unlucky client
+would look like a bug.
+
+I found that out the hard way. My first attempt at the whole thing passed happily with the read
+barrier turned off, which meant it was proving nothing at all. Two reasons: the test killed
+leaders instead of partitioning them, and every caller talked to the same node. Fixing both, and
+then testing the checker separately, is what turned it into evidence.
 
 ---
 
@@ -153,11 +184,10 @@ writing down, because each one fooled me for a bit.
 value back. It passed for weeks. Then I made the code faster and it started failing.
 
 Turned out the read was landing on a *different* stale leader, which answered "not found" with
-total confidence. Which is exactly the stale-read problem I documented in
-[DESIGN.md](DESIGN.md), working as designed.
+total confidence. That was the stale-read problem working exactly as designed, and the test was
+asserting something the system didn't promise. So I loosened it to wait for the value instead.
 
-The test now waits for the value to show up instead of demanding it instantly. That's what the
-system actually guarantees. Asserting more than that was the real bug.
+It's since been tightened back up. The read barrier means the system now does promise it.
 
 **"Some messages got dropped."** A test set a 30% drop rate and then checked that drops had
 happened. With few enough messages, 30% can legitimately drop nothing. I replaced it with a

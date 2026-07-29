@@ -27,12 +27,14 @@ Picks a leader. Copies every write to a majority of machines before saying "done
 crashes, because everything hits the disk before anyone gets an answer. Trims its own log so it
 doesn't grow forever. Retries on your behalf when the leader changes.
 
-Five nodes, gRPC between them, no external raft libraries (this is not a wrapper).
+Five nodes, gRPC between them, no external raft libraries (this is not a wrapper). gRPC is the
+only third-party thing that ships in the binary. Tests also use Porcupine to check
+linearizability, but that never leaves the test build.
 
 | | |
 |---|---|
 | [DESIGN.md](DESIGN.md) | how it works, why I made each choice, and everything it still can't do |
-| [TESTING.md](TESTING.md) | how I test it, and the six bugs that found |
+| [TESTING.md](TESTING.md) | how I test it, the six bugs that found, and the linearizability checker |
 | [BENCHMARKS.md](BENCHMARKS.md) | how fast it is, plus the time I made it faster and broke it |
 
 ## How fast
@@ -84,7 +86,7 @@ You need Go 1.26 or newer.
 
 ```bash
 go build ./...
-go test ./...                              # 66 tests
+go test ./...                              # 80 tests
 ./scripts/crash-test.sh                    # kills nodes with -9, over and over
 ./scripts/chaos-sweep.sh --seeds 20        # breaks the network, checks nothing broke
 ./scripts/start-cluster.sh                 # five nodes, Ctrl-C to stop
