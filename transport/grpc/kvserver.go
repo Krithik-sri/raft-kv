@@ -79,6 +79,23 @@ func (s *KVServer) Get(
 		return &raftpb.GetResponse{Redirect: s.redirect()}, nil
 	}
 
+	// A stale read trusts whatever this node happens to have. Being leader is
+	// not proof of anything: a leader that has been cut off keeps saying yes.
+	if !req.AllowStale {
+		index, err := s.node.ReadIndex(ctx)
+
+		if errors.Is(err, raft.ErrNotLeader) {
+			return &raftpb.GetResponse{Redirect: s.redirect()}, nil
+		}
+		if err != nil {
+			return nil, status.Error(codes.Unavailable, err.Error())
+		}
+
+		if err := s.node.WaitForApplied(ctx, index); err != nil {
+			return nil, status.Error(codes.Unavailable, err.Error())
+		}
+	}
+
 	value, found := s.store.Get(req.Key)
 
 	return &raftpb.GetResponse{

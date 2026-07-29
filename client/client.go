@@ -175,14 +175,33 @@ func (c *Client) do(ctx context.Context, fn call) error {
 	return ErrNoLeader
 }
 
-func (c *Client) Get(ctx context.Context, key string) (string, bool, error) {
+// GetOption tweaks a single read.
+type GetOption func(*raftpb.GetRequest)
+
+// WithStale skips the read barrier. The answer comes straight from whichever
+// node you reached, so it is fast and it may be out of date. Without it, reads
+// are linearizable.
+func WithStale() GetOption {
+	return func(req *raftpb.GetRequest) { req.AllowStale = true }
+}
+
+func (c *Client) Get(
+	ctx context.Context,
+	key string,
+	opts ...GetOption,
+) (string, bool, error) {
 	var (
 		value string
 		found bool
 	)
 
 	err := c.do(ctx, func(service raftpb.KVServiceClient) (*raftpb.LeaderRedirect, error) {
-		resp, err := service.Get(ctx, &raftpb.GetRequest{Key: key})
+		request := &raftpb.GetRequest{Key: key}
+		for _, opt := range opts {
+			opt(request)
+		}
+
+		resp, err := service.Get(ctx, request)
 		if err != nil {
 			return nil, err
 		}

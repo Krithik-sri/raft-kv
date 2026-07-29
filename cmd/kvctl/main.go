@@ -28,6 +28,7 @@ flags:
 func run() error {
 	peers := flag.String("peers", "", "comma separated cluster addresses")
 	timeout := flag.Duration("timeout", 5*time.Second, "request timeout")
+	stale := flag.Bool("stale", false, "allow a possibly out-of-date read (get only)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -56,7 +57,12 @@ func run() error {
 			return fmt.Errorf("get requires exactly one key")
 		}
 
-		value, found, err := kv.Get(ctx, args[1])
+		var opts []client.GetOption
+		if *stale {
+			opts = append(opts, client.WithStale())
+		}
+
+		value, found, err := kv.Get(ctx, args[1], opts...)
 		if err != nil {
 			return err
 		}
