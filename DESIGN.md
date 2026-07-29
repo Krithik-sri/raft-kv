@@ -91,6 +91,29 @@ unreachable.
 The fix is one empty entry in the new term. Commit that, and everything underneath it comes
 along. I found this because a test failed, not because I read carefully enough.
 
+**Reads check that the leader is still the leader.** This is the §6.4 read barrier, and it took
+me a while to accept that I needed it.
+
+The naive version of a read is "I'm the leader, here's my map". The problem is that being the
+leader is not something you can know locally. A machine that got cut off from the network still
+believes it's in charge, and its map can be arbitrarily out of date. So the naive version hands
+you old data with total confidence, which is the worst kind of wrong.
+
+So `Get` does this instead. Note the current commit index. Bump a counter. Wait until a
+majority of machines have answered a message sent after that counter went up. Wait for the
+state machine to catch up to that index. Then read.
+
+The counter is the trick. Every message a follower answers is tagged with whatever the counter
+was when the message was built, so an answer proves the follower was talking to us *after* the
+read arrived. No extra messages: it rides along on the heartbeats that were happening anyway.
+
+One thing I got wrong first time. I tried sending a dedicated round of heartbeats to confirm
+the quorum. That walks straight back into a bug I'd already fixed, where two `AppendEntries` in
+flight to the same follower race each other. Reusing the existing round avoids it entirely.
+
+If you want the old behaviour, `WithStale()` on the client or `--stale` on kvctl. It's fast and
+it's sometimes wrong, and now that's your decision rather than mine.
+
 **Pre-vote.** Before a machine starts an election, it asks around: "would you vote for me?" It
 only bumps its term number if the answer is yes. And nobody says yes while they can still hear
 from a healthy leader.
@@ -123,8 +146,10 @@ disagree.
 
 **One message in flight per follower at a time.** This isn't really a decision. It's something I
 broke and had to put back. The heartbeat timer had been enforcing it by accident, and when I
-made replication faster I removed it without noticing. The story is in
-[BENCHMARKS.md](BENCHMARKS.md).
+made replication faster I removed it without noticing.
+
+It turned out to be worth 70% more throughput as well as fixing the safety bug, which was not
+what I expected. The story is in [BENCHMARKS.md](BENCHMARKS.md).
 
 ---
 
@@ -132,20 +157,13 @@ made replication faster I removed it without noticing. The story is in
 
 I'd rather say this plainly than have you find out.
 
-**Reads can be stale.** `Get` reads the leader's local map. It doesn't check that it's still the
-leader. So a machine that got cut off from the network but hasn't realised yet will answer your
-read with confidence and old data. Writes are fine, because it can't finish one without hearing
-from a majority.
+**No CheckQuorum.** A leader that got cut off doesn't work out for itself that it's finished. It
+stays in the leader state until somebody tells it about a newer term.
 
-The fix is called ReadIndex (§6.4) and I haven't built it. Until then the honest claim is
-"writes are correct, reads are usually correct".
-
-This is also why I haven't wired up Porcupine, the linearizability checker. It would spend the
-whole run reporting the read problem I just described. Expensive way to learn something I
-already wrote down.
-
-**No CheckQuorum.** Same root cause. A cut-off leader stays leader until someone tells it about
-a newer term.
+Nothing unsafe comes of this any more. It can't commit writes without a majority, and since the
+read barrier landed it can't answer reads either. But it does mean every read sent to that
+machine waits for a timeout before failing, instead of being told "not the leader, go away"
+straight away. CheckQuorum is the fix and it's next.
 
 **Snapshots aren't chunked.** They go in one gRPC message. gRPC's default limit is 4MB, so a
 state machine bigger than that simply won't transfer. The paper explains how to chunk it. I

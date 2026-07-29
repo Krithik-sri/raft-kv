@@ -27,7 +27,7 @@ Picks a leader. Copies every write to a majority of machines before saying "done
 crashes, because everything hits the disk before anyone gets an answer. Trims its own log so it
 doesn't grow forever. Retries on your behalf when the leader changes.
 
-Five nodes, gRPC between them, no dependencies you haven't heard of.
+Five nodes, gRPC between them, no external raft libraries (this is not a wrapper).
 
 | | |
 |---|---|
@@ -38,15 +38,21 @@ Five nodes, gRPC between them, no dependencies you haven't heard of.
 ## How fast
 
 ```
-3 nodes   245 writes/s   p50 30ms   failover 269ms
-5 nodes   235 writes/s   p50 32ms   failover 240ms
-7 nodes   228 writes/s   p50 32ms   failover 214ms
+            writes/s   p50      reads/s   p50      failover
+3 nodes     422        17.6ms   14092     524us    211ms
+5 nodes     402        18.3ms   13139     530us    264ms
+7 nodes     395        18.3ms   12488     562us    209ms
 ```
 
-Adding machines barely slows it down. The 30ms is almost entirely waiting for disks.
+Adding machines barely slows it down. The 17ms on writes is almost entirely waiting for disks.
 
-"Failover" is how long you wait after the leader dies before writes work again. A quarter of a
-second, which I'm happy with.
+Reads are much cheaper than writes because nothing has to be written down. They still cost
+about half a millisecond, because a read checks that this node really is still the leader
+before answering. Pass `--stale` and you skip that check: about 18,000 reads/s and no waiting,
+but the answer might be out of date.
+
+"Failover" is how long you wait after the leader dies before writes work again. About a fifth
+of a second.
 
 ## The six bugs
 
@@ -61,9 +67,10 @@ Full write-ups in [TESTING.md](TESTING.md). They're the best part of this repo.
 
 ## What it can't do
 
-Reads can be stale. A leader that got cut off from the network but hasn't noticed will happily
-answer your read with old data. Writes are safe, since it can't finish one without a majority.
-Fixing reads needs a thing called ReadIndex and I haven't built it.
+A leader that got cut off from the network doesn't notice on its own. It won't answer reads
+(it can't prove it still has a quorum) and it can't commit writes, so nothing unsafe happens.
+It just sits there being useless until someone tells it about a newer term. The fix is called
+CheckQuorum and it's next on my list.
 
 Snapshots go over the wire in one message, so a big state machine won't transfer at all.
 
@@ -101,7 +108,8 @@ go run ./cmd/server --id node1 --addr localhost:5001 --peers node2=localhost:500
 ```
 
 `kvctl` does `get`, `put`, `delete` and `cas`. `get` exits non-zero when the key is missing, so
-you can use it in scripts.
+you can use it in scripts. `get --stale` skips the leader check if you want speed over
+freshness.
 
 Logs go to stderr. Default is `info`, which is quiet. Add `--log-level debug` to watch every
 message fly past, but be ready for a lot of scrolling.
