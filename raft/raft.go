@@ -39,9 +39,16 @@ type Raft struct {
 	waiters     map[uint64]chan applyOutcome
 	replicating map[NodeID]bool
 
+	// readBarrier is bumped by every ReadIndex. ackedBarrier records the
+	// highest barrier each peer has answered, which is how we prove we still
+	// hold a quorum without sending extra messages.
+	readBarrier  uint64
+	ackedBarrier map[NodeID]uint64
+
 	electionResetCh chan struct{}
 	applyCh         chan struct{}
 	replicateCh     chan struct{}
+	progressCh      chan struct{}
 }
 
 func New(
@@ -63,14 +70,16 @@ func New(
 		log:               []LogEntry{{}},
 		snapshotThreshold: defaultSnapshotThreshold,
 
-		nextIndex:   make(map[NodeID]uint64),
-		matchIndex:  make(map[NodeID]uint64),
-		waiters:     make(map[uint64]chan applyOutcome),
-		replicating: make(map[NodeID]bool),
+		nextIndex:    make(map[NodeID]uint64),
+		matchIndex:   make(map[NodeID]uint64),
+		waiters:      make(map[uint64]chan applyOutcome),
+		replicating:  make(map[NodeID]bool),
+		ackedBarrier: make(map[NodeID]uint64),
 
 		electionResetCh: make(chan struct{}, 1),
 		applyCh:         make(chan struct{}, 1),
 		replicateCh:     make(chan struct{}, 1),
+		progressCh:      make(chan struct{}),
 	}
 
 	state, err := storage.Load()
@@ -147,6 +156,7 @@ func (r *Raft) becomeCandidate(expectedTerm uint64) bool {
 	r.currentTerm = term
 	r.votedFor = r.id
 	r.leaderID = ""
+	r.notifyProgressLocked()
 	return true
 }
 
@@ -248,7 +258,7 @@ func (r *Raft) submit(command []byte) (uint64, uint64, bool) {
 	return index, term, true
 }
 
-func (r *Raft) advancePeerProgress(peerID NodeID, matchIndex, term uint64) {
+func (r *Raft) advancePeerProgress(peerID NodeID, matchIndex, term, barrier uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -261,7 +271,26 @@ func (r *Raft) advancePeerProgress(peerID NodeID, matchIndex, term uint64) {
 	}
 	r.nextIndex[peerID] = r.matchIndex[peerID] + 1
 
+	if barrier > r.ackedBarrier[peerID] {
+		r.ackedBarrier[peerID] = barrier
+	}
+
 	r.advanceCommitIndexLocked()
+	r.notifyProgressLocked()
+}
+
+// currentBarrier reads the read barrier before a message is built.
+//
+// It has to be captured before the send, never after. An ack only proves the
+// peer answered a message sent at or after the barrier it is credited with.
+// Capturing late could credit an ack to a barrier raised after the message
+// left, which would let a read through without a real quorum check. Capturing
+// early is safe: the worst case is one extra round trip.
+func (r *Raft) currentBarrier() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.readBarrier
 }
 
 func (r *Raft) retreatNextIndex(peerID NodeID, term uint64) {
@@ -334,6 +363,7 @@ func (r *Raft) becomeFollower(term uint64) {
 	}
 
 	r.state = Follower
+	r.notifyProgressLocked()
 }
 
 func (r *Raft) resetElectionTimer() {
