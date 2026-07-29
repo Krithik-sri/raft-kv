@@ -139,6 +139,15 @@ func (r *Raft) runReplication(ctx context.Context, term uint64) {
 			return
 		}
 
+		if !r.hasQuorumRecently() {
+			r.logger.Info("stepping down, cannot reach a majority", "term", term)
+
+			// Same term. There is no new one, this node just is not the leader
+			// any more.
+			r.becomeFollower(term)
+			return
+		}
+
 		r.replicateToAll(ctx, term)
 
 		select {
