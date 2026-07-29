@@ -75,25 +75,36 @@ func (s *KVServer) Get(
 	ctx context.Context,
 	req *raftpb.GetRequest,
 ) (*raftpb.GetResponse, error) {
+	// A stale read is answered by whichever node you happened to ask. It does
+	// not have to be the leader and it may be behind. That is the entire point
+	// of asking for one, and it means stale reads spread across every replica
+	// instead of piling onto the leader.
+	if req.AllowStale {
+		value, found := s.store.Get(req.Key)
+
+		return &raftpb.GetResponse{
+			Value: value,
+			Found: found,
+		}, nil
+	}
+
 	if _, isLeader := s.node.LeaderHint(); !isLeader {
 		return &raftpb.GetResponse{Redirect: s.redirect()}, nil
 	}
 
-	// A stale read trusts whatever this node happens to have. Being leader is
-	// not proof of anything: a leader that has been cut off keeps saying yes.
-	if !req.AllowStale {
-		index, err := s.node.ReadIndex(ctx)
+	// Being leader is a claim, not proof. A node that has been cut off keeps
+	// saying yes, so make it show a quorum before it answers.
+	index, err := s.node.ReadIndex(ctx)
 
-		if errors.Is(err, raft.ErrNotLeader) {
-			return &raftpb.GetResponse{Redirect: s.redirect()}, nil
-		}
-		if err != nil {
-			return nil, status.Error(codes.Unavailable, err.Error())
-		}
+	if errors.Is(err, raft.ErrNotLeader) {
+		return &raftpb.GetResponse{Redirect: s.redirect()}, nil
+	}
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
 
-		if err := s.node.WaitForApplied(ctx, index); err != nil {
-			return nil, status.Error(codes.Unavailable, err.Error())
-		}
+	if err := s.node.WaitForApplied(ctx, index); err != nil {
+		return nil, status.Error(codes.Unavailable, err.Error())
 	}
 
 	value, found := s.store.Get(req.Key)
