@@ -69,12 +69,10 @@ Full write-ups in [TESTING.md](TESTING.md). They're the best part of this repo.
 
 ## What it can't do
 
-A leader that got cut off from the network doesn't notice on its own. It won't answer reads
-(it can't prove it still has a quorum) and it can't commit writes, so nothing unsafe happens.
-It just sits there being useless until someone tells it about a newer term. The fix is called
-CheckQuorum and it's next on my list.
-
 Snapshots go over the wire in one message, so a big state machine won't transfer at all.
+
+Every write flushes to disk on its own. Batching them together is the obvious next speedup and
+I haven't done it.
 
 You can't add or remove machines while it's running. The list is fixed at startup.
 
@@ -86,7 +84,7 @@ You need Go 1.26 or newer.
 
 ```bash
 go build ./...
-go test ./...                              # 80 tests
+go test ./...                              # 86 tests
 ./scripts/crash-test.sh                    # kills nodes with -9, over and over
 ./scripts/chaos-sweep.sh --seeds 20        # breaks the network, checks nothing broke
 ./scripts/start-cluster.sh                 # five nodes, Ctrl-C to stop

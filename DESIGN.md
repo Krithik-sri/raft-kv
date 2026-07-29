@@ -115,6 +115,29 @@ flight to the same follower race each other. Reusing the existing round avoids i
 If you want the old behaviour, `WithStale()` on the client or `--stale` on kvctl. It's fast and
 it's sometimes wrong, and now that's your decision rather than mine.
 
+A stale read is answered by whichever machine you asked, leader or not. That's deliberate. If
+you've already said you don't mind old data, there's no reason to make you queue behind the
+leader for it, and it means stale reads spread across every replica instead of piling onto one
+machine.
+
+**A leader that can't reach anyone works out that it's finished.** This is CheckQuorum, and it
+is the other half of the read barrier.
+
+Being the leader is a claim, not a fact. A machine that gets cut off keeps believing it is in
+charge, and nobody can correct it, because it's cut off. That's the whole problem in one
+sentence.
+
+So it watches the clock. Every reply from a follower gets timestamped. Once an election
+timeout goes by without a majority answering, it stands down on its own.
+
+It keeps the same term when it does. There is no new term. This machine just isn't the leader
+any more, and inventing a term number here would only disrupt whatever the reachable side has
+already sorted out for itself.
+
+The read barrier already made a cut-off leader harmless. This makes it *quick*. Before, a read
+sent to one had to wait for the caller's timeout. Now it gets told "not the leader" in about
+half a second and can go find the real one.
+
 **Pre-vote.** Before a machine starts an election, it asks around: "would you vote for me?" It
 only bumps its term number if the answer is yes. And nobody says yes while they can still hear
 from a healthy leader.
@@ -157,14 +180,6 @@ what I expected. The story is in [BENCHMARKS.md](BENCHMARKS.md).
 # What it can't do
 
 I'd rather say this plainly than have you find out.
-
-**No CheckQuorum.** A leader that got cut off doesn't work out for itself that it's finished. It
-stays in the leader state until somebody tells it about a newer term.
-
-Nothing unsafe comes of this any more. It can't commit writes without a majority, and since the
-read barrier landed it can't answer reads either. But it does mean every read sent to that
-machine waits for a timeout before failing, instead of being told "not the leader, go away"
-straight away. CheckQuorum is the fix and it's next.
 
 **Snapshots aren't chunked.** They go in one gRPC message. gRPC's default limit is 4MB, so a
 state machine bigger than that simply won't transfer. The paper explains how to chunk it. I

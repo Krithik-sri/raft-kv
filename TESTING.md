@@ -3,7 +3,7 @@
 Back to the [README](README.md).
 
 ```bash
-go test ./...                                       # 80 tests
+go test ./...                                       # 86 tests
 ./scripts/crash-test.sh                             # kills nodes with -9
 ./scripts/chaos-sweep.sh --seeds 20                 # breaks the network
 go test ./raft/ -run TestChaos -chaos.duration=30m  # the long one
