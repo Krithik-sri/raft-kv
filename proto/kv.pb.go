@@ -74,8 +74,11 @@ func (x *LeaderRedirect) GetLeaderAddress() string {
 }
 
 type GetRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Key   string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	// Skip the read barrier. Faster, but the value may be out of date if this
+	// node has been cut off from the cluster without noticing.
+	AllowStale    bool `protobuf:"varint,2,opt,name=allow_stale,json=allowStale,proto3" json:"allow_stale,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -115,6 +118,13 @@ func (x *GetRequest) GetKey() string {
 		return x.Key
 	}
 	return ""
+}
+
+func (x *GetRequest) GetAllowStale() bool {
+	if x != nil {
+		return x.AllowStale
+	}
+	return false
 }
 
 type GetResponse struct {
@@ -528,10 +538,12 @@ const file_proto_kv_proto_rawDesc = "" +
 	"\x0eproto/kv.proto\x12\x04raft\"T\n" +
 	"\x0eLeaderRedirect\x12\x1b\n" +
 	"\tleader_id\x18\x01 \x01(\tR\bleaderId\x12%\n" +
-	"\x0eleader_address\x18\x02 \x01(\tR\rleaderAddress\"\x1e\n" +
+	"\x0eleader_address\x18\x02 \x01(\tR\rleaderAddress\"?\n" +
 	"\n" +
 	"GetRequest\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\"k\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1f\n" +
+	"\vallow_stale\x18\x02 \x01(\bR\n" +
+	"allowStale\"k\n" +
 	"\vGetResponse\x120\n" +
 	"\bredirect\x18\x01 \x01(\v2\x14.raft.LeaderRedirectR\bredirect\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12\x14\n" +

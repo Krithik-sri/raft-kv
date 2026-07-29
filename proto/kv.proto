@@ -18,6 +18,10 @@ message LeaderRedirect {
 
 message GetRequest {
     string key = 1;
+
+    // Skip the read barrier. Faster, but the value may be out of date if this
+    // node has been cut off from the cluster without noticing.
+    bool allow_stale = 2;
 }
 
 message GetResponse {
