@@ -93,6 +93,13 @@ func (r *Raft) campaign(ctx context.Context) {
 		return
 	}
 
+	// Learners have no vote, and a machine that has been removed is not part
+	// of this cluster any more. Neither gets to start an election.
+	if !r.config.isVoter(r.id) {
+		r.mu.Unlock()
+		return
+	}
+
 	term := r.currentTerm
 	lastLogIndex, lastLogTerm := r.lastLogIndexAndTermLocked()
 

@@ -43,7 +43,10 @@ func (r *Raft) notifyProgressLocked() {
 // quorumAckedLocked reports whether a majority has answered us since the read
 // barrier was raised. We count ourselves.
 func (r *Raft) quorumAckedLocked(barrier uint64) bool {
-	acked := 1
+	acked := 0
+	if r.config.isVoter(r.id) {
+		acked = 1
+	}
 
 	for _, member := range r.config.Members {
 		if member.ID == r.id || !member.Voter {

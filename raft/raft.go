@@ -354,7 +354,7 @@ func (r *Raft) advanceCommitIndexLocked() {
 		// lets a crash turn the majority that committed this entry into a
 		// minority, which loses acknowledged writes.
 		count := 0
-		if r.persistedIndex >= index {
+		if r.config.isVoter(r.id) && r.persistedIndex >= index {
 			count = 1
 		}
 
@@ -396,7 +396,11 @@ func (r *Raft) hasQuorumRecently() bool {
 
 	cutoff := time.Now().Add(-maxElectionTimeout)
 
-	reachable := 1
+	reachable := 0
+	if r.config.isVoter(r.id) {
+		reachable = 1
+	}
+
 	for _, member := range r.config.Members {
 		if member.ID == r.id || !member.Voter {
 			continue
