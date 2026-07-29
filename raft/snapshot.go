@@ -131,6 +131,7 @@ func (r *Raft) HandleInstallSnapshot(
 		},
 		r.currentTerm,
 		r.votedFor,
+		r.config,
 		retained,
 	)
 	if err != nil {
@@ -142,6 +143,7 @@ func (r *Raft) HandleInstallSnapshot(
 	r.snapshotIndex = req.LastIncludedIndex
 	r.snapshotTerm = req.LastIncludedTerm
 	r.persistedUpToLocked()
+	r.baseConfig = r.config
 
 	r.commitIndex = max(r.commitIndex, req.LastIncludedIndex)
 	r.lastApplied = max(r.lastApplied, req.LastIncludedIndex)

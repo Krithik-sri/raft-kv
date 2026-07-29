@@ -36,11 +36,14 @@ func (r *Raft) handlePreVote(req RequestVoteRequest) RequestVoteResponse {
 }
 
 func (r *Raft) winPreVote(ctx context.Context, req RequestVoteRequest) bool {
-	if len(r.peers) == 0 {
+	r.mu.Lock()
+	majority := r.majorityLocked()
+	peers := r.peersLocked()
+	r.mu.Unlock()
+
+	if len(peers) == 0 {
 		return true
 	}
-
-	majority := r.majority()
 
 	var (
 		wg    sync.WaitGroup
@@ -49,9 +52,9 @@ func (r *Raft) winPreVote(ctx context.Context, req RequestVoteRequest) bool {
 		ahead uint64
 	)
 
-	wg.Add(len(r.peers))
+	wg.Add(len(peers))
 
-	for _, peer := range r.peers {
+	for _, peer := range peers {
 		go func(peer Peer) {
 			defer wg.Done()
 

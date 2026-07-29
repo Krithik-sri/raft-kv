@@ -13,8 +13,8 @@ type Raft struct {
 	mu           sync.Mutex
 	applyMu      sync.Mutex
 	id           NodeID
+	address      string
 	state        State
-	peers        []Peer
 	transport    Transport
 	stateMachine StateMachine
 	storage      Storage
@@ -49,6 +49,16 @@ type Raft struct {
 	// majority any more uses this to work out that it is finished.
 	lastAck map[NodeID]time.Time
 
+	// config is who is in the cluster right now, and configIndex is the log
+	// entry it came from. Both change at runtime, so both are guarded by r.mu.
+	config      Configuration
+	configIndex uint64
+
+	// baseConfig is the membership as of the snapshot, i.e. the starting point
+	// the log is replayed on top of. Kept so the config can be recomputed when
+	// a truncation takes a configuration entry back out again.
+	baseConfig Configuration
+
 	// persistedIndex is the highest log index known to be on disk. The log in
 	// memory runs ahead of it, which is the entire point, and is also why the
 	// leader may not count itself towards a majority above it.
@@ -62,17 +72,17 @@ type Raft struct {
 }
 
 func New(
-	id NodeID,
+	self Peer,
 	peers []Peer,
 	transport Transport,
 	stateMachine StateMachine,
 	storage Storage,
 ) (*Raft, error) {
 	r := &Raft{
-		id:           id,
-		logger:       slog.Default().With("node", string(id)),
+		id:           self.ID,
+		address:      self.Address,
+		logger:       slog.Default().With("node", string(self.ID)),
 		state:        Follower,
-		peers:        peers,
 		transport:    transport,
 		stateMachine: stateMachine,
 		storage:      storage,
@@ -109,6 +119,17 @@ func New(
 	r.log = []LogEntry{{Term: state.SnapshotTerm}}
 	r.log = append(r.log, state.Log...)
 	r.persistedUpToLocked()
+
+	// Where we start from: whatever the snapshot remembered, or the list we
+	// were handed if this is a brand new machine. The log gets the last word.
+	base := state.Config
+	if base == nil {
+		bootstrap := configurationFromPeers(self.ID, self.Address, peers)
+		base = &bootstrap
+	}
+
+	r.baseConfig = *base
+	r.refreshConfigLocked(r.baseConfig, state.SnapshotIndex)
 
 	data, ok, err := storage.LoadSnapshot()
 	if err != nil {
@@ -321,12 +342,8 @@ func (r *Raft) retreatNextIndex(peerID NodeID, term uint64) {
 	}
 }
 
-func (r *Raft) majority() int {
-	return (len(r.peers)+1)/2 + 1
-}
-
 func (r *Raft) advanceCommitIndexLocked() {
-	majority := r.majority()
+	majority := r.majorityLocked()
 
 	for index := r.lastLogIndexLocked(); index > r.commitIndex; index-- {
 		if term, ok := r.termAtLocked(index); !ok || term != r.currentTerm {
@@ -341,8 +358,11 @@ func (r *Raft) advanceCommitIndexLocked() {
 			count = 1
 		}
 
-		for _, peer := range r.peers {
-			if r.matchIndex[peer.ID] >= index {
+		for _, member := range r.config.Members {
+			if member.ID == r.id || !member.Voter {
+				continue
+			}
+			if r.matchIndex[member.ID] >= index {
 				count++
 			}
 		}
@@ -377,13 +397,16 @@ func (r *Raft) hasQuorumRecently() bool {
 	cutoff := time.Now().Add(-maxElectionTimeout)
 
 	reachable := 1
-	for _, peer := range r.peers {
-		if r.lastAck[peer.ID].After(cutoff) {
+	for _, member := range r.config.Members {
+		if member.ID == r.id || !member.Voter {
+			continue
+		}
+		if r.lastAck[member.ID].After(cutoff) {
 			reachable++
 		}
 	}
 
-	return reachable >= r.majority()
+	return reachable >= r.majorityLocked()
 }
 
 func (r *Raft) isLeaderForTerm(term uint64) bool {
@@ -440,12 +463,14 @@ func (r *Raft) becomeLeader(term uint64) bool {
 	// Nobody has answered this term yet. Without this, the quorum check below
 	// would depose the leader the instant it was elected.
 	now := time.Now()
-	for _, peer := range r.peers {
+	peers := r.peersLocked()
+
+	for _, peer := range peers {
 		r.lastAck[peer.ID] = now
 	}
 
 	lastLogIndex, _ := r.lastLogIndexAndTermLocked()
-	for _, peer := range r.peers {
+	for _, peer := range peers {
 		r.nextIndex[peer.ID] = lastLogIndex + 1
 		r.matchIndex[peer.ID] = 0
 	}

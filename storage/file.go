@@ -22,8 +22,9 @@ const (
 )
 
 type entry struct {
-	Term    uint64 `json:"term"`
-	Command []byte `json:"command,omitempty"`
+	Term    uint64         `json:"term"`
+	Kind    raft.EntryKind `json:"kind,omitempty"`
+	Command []byte         `json:"command,omitempty"`
 }
 
 type record struct {
@@ -34,6 +35,8 @@ type record struct {
 	Length        uint64  `json:"length,omitempty"`
 	SnapshotIndex uint64  `json:"snapshot_index,omitempty"`
 	SnapshotTerm  uint64  `json:"snapshot_term,omitempty"`
+
+	Config *raft.Configuration `json:"config,omitempty"`
 }
 
 type File struct {
@@ -151,7 +154,7 @@ func (s *File) TruncateLog(length uint64) error {
 func encodeEntries(entries []raft.LogEntry) []entry {
 	encoded := make([]entry, len(entries))
 	for i, e := range entries {
-		encoded[i] = entry{Term: e.Term, Command: e.Command}
+		encoded[i] = entry{Term: e.Term, Kind: e.Kind, Command: e.Command}
 	}
 	return encoded
 }
@@ -175,6 +178,7 @@ func (s *File) SaveSnapshot(
 	snapshot raft.Snapshot,
 	term uint64,
 	votedFor raft.NodeID,
+	config raft.Configuration,
 	retained []raft.LogEntry,
 ) error {
 	s.mu.Lock()
@@ -189,6 +193,7 @@ func (s *File) SaveSnapshot(
 			Kind:          kindCompact,
 			SnapshotIndex: snapshot.Index,
 			SnapshotTerm:  snapshot.Term,
+			Config:        &config,
 		},
 		{
 			Kind:     kindState,
@@ -272,7 +277,7 @@ func (s *File) Load() (raft.PersistentState, error) {
 
 		case kindAppend:
 			for _, e := range rec.Entries {
-				entries = append(entries, raft.LogEntry{Term: e.Term, Command: e.Command})
+				entries = append(entries, raft.LogEntry{Term: e.Term, Kind: e.Kind, Command: e.Command})
 			}
 
 		case kindTruncate:
@@ -286,6 +291,7 @@ func (s *File) Load() (raft.PersistentState, error) {
 		case kindCompact:
 			state.SnapshotIndex = rec.SnapshotIndex
 			state.SnapshotTerm = rec.SnapshotTerm
+			state.Config = rec.Config
 			entries = nil
 		}
 	}

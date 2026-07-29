@@ -88,7 +88,9 @@ func Start(size int, dataDir string) (*Cluster, error) {
 
 		store := kvstore.New()
 
-		node, err := raft.New(ids[i], peers, &grpctransport.Transport{}, store, persist)
+		self := raft.Peer{ID: ids[i], Address: addresses[i]}
+
+		node, err := raft.New(self, peers, &grpctransport.Transport{}, store, persist)
 		if err != nil {
 			c.Stop()
 			return nil, fmt.Errorf("new node %s: %w", ids[i], err)

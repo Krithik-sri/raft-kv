@@ -45,13 +45,16 @@ func (r *Raft) notifyProgressLocked() {
 func (r *Raft) quorumAckedLocked(barrier uint64) bool {
 	acked := 1
 
-	for _, peer := range r.peers {
-		if r.ackedBarrier[peer.ID] >= barrier {
+	for _, member := range r.config.Members {
+		if member.ID == r.id || !member.Voter {
+			continue
+		}
+		if r.ackedBarrier[member.ID] >= barrier {
 			acked++
 		}
 	}
 
-	return acked >= r.majority()
+	return acked >= r.majorityLocked()
 }
 
 // ReadIndex returns a log index that is safe to read at, once it has proved we

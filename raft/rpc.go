@@ -12,13 +12,16 @@ func (r *Raft) RequestVotes(ctx context.Context) {
 
 	votes := 1
 
-	majority := r.majority()
+	r.mu.Lock()
+	majority := r.majorityLocked()
+	peers := r.peersLocked()
+	r.mu.Unlock()
 
 	req := r.makeRequestVoteRequest()
 
-	wg.Add(len(r.peers))
+	wg.Add(len(peers))
 
-	for _, peer := range r.peers {
+	for _, peer := range peers {
 		go func(peer Peer) {
 			defer wg.Done()
 
@@ -124,7 +127,7 @@ func (r *Raft) replicateTo(ctx context.Context, peer Peer, term uint64) {
 }
 
 func (r *Raft) replicateToAll(ctx context.Context, term uint64) {
-	for _, peer := range r.peers {
+	for _, peer := range r.currentPeers() {
 		go r.replicateTo(ctx, peer, term)
 	}
 }
@@ -348,6 +351,7 @@ func (r *Raft) HandleAppendEntries(
 		}
 
 		r.persistedUpToLocked()
+		r.refreshConfigLocked(r.baseConfig, r.snapshotIndex)
 	}
 
 	if req.LeaderCommit > r.commitIndex {

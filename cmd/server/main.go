@@ -82,7 +82,7 @@ func main() {
 	raftTransport := &grpctransport.Transport{}
 	store := kvstore.New()
 	raftNode, err := raft.New(
-		raft.NodeID(*id),
+		raft.Peer{ID: raft.NodeID(*id), Address: *addr},
 		peers,
 		raftTransport,
 		store,

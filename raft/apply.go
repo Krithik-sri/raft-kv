@@ -44,8 +44,8 @@ func (r *Raft) applyCommitted() {
 
 	for offset, entry := range pending {
 		index := first + uint64(offset)
-
-		if len(entry.Command) == 0 {
+		
+		if entry.Kind != EntryCommand || len(entry.Command) == 0 {
 			continue
 		}
 
@@ -119,6 +119,7 @@ func (r *Raft) maybeSnapshot() {
 		Snapshot{Index: index, Term: term, Data: data},
 		r.currentTerm,
 		r.votedFor,
+		r.config,
 		retained,
 	)
 	if err != nil {
@@ -130,6 +131,7 @@ func (r *Raft) maybeSnapshot() {
 	r.snapshotIndex = index
 	r.snapshotTerm = term
 	r.persistedUpToLocked()
+	r.baseConfig = r.config
 
 	r.logger.Info("snapshot taken", "index", index, "term", term, "retained", len(retained))
 }
