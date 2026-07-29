@@ -46,7 +46,7 @@ func startKVCluster(t *testing.T, size int) ([]*Raft, []*kvstore.Store, *memNetw
 
 		stores[i] = kvstore.New()
 
-		node, err := New(id, peers, &memTransport{self: id, net: network}, stores[i], &memStorage{})
+		node, err := New(Peer{ID: id}, peers, &memTransport{self: id, net: network}, stores[i], &memStorage{})
 		if err != nil {
 			t.Fatalf("New %s: %v", id, err)
 		}

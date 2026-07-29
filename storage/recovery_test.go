@@ -19,7 +19,7 @@ func newNode(t *testing.T, path string) (*raft.Raft, *File) {
 		t.Fatalf("Open: %v", err)
 	}
 
-	node, err := raft.New("n1", nil, nil, kvstore.New(), store)
+	node, err := raft.New(raft.Peer{ID: "n1"}, nil, nil, kvstore.New(), store)
 	if err != nil {
 		t.Fatalf("raft.New: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestSnapshotSurvivesRestart(t *testing.T) {
 	}
 
 	machine := kvstore.New()
-	node, err := raft.New("n1", nil, nil, machine, store)
+	node, err := raft.New(raft.Peer{ID: "n1"}, nil, nil, machine, store)
 	if err != nil {
 		t.Fatalf("raft.New: %v", err)
 	}

@@ -6,7 +6,7 @@ import (
 )
 
 func newTestRaft() *Raft {
-	r, err := New("n1", nil, nil, &recordingStateMachine{}, &memStorage{})
+	r, err := New(Peer{ID: "n1"}, nil, nil, &recordingStateMachine{}, &memStorage{})
 	if err != nil {
 		panic(err)
 	}

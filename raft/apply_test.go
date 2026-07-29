@@ -61,7 +61,7 @@ func (m *recordingStateMachine) count() int {
 
 func newTestApplier(commands []string, commitIndex uint64) (*Raft, *recordingStateMachine) {
 	machine := &recordingStateMachine{}
-	r, err := New("n1", nil, nil, machine, &memStorage{})
+	r, err := New(Peer{ID: "n1"}, nil, nil, machine, &memStorage{})
 	if err != nil {
 		panic(err)
 	}

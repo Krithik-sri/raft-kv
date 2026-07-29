@@ -27,6 +27,7 @@ func (s *memStorage) SaveSnapshot(
 	snapshot Snapshot,
 	term uint64,
 	votedFor NodeID,
+	config Configuration,
 	retained []LogEntry,
 ) error {
 	s.mu.Lock()
@@ -275,7 +276,7 @@ func startClusterWithThreshold(
 		}
 		machines[i] = &recordingStateMachine{}
 
-		node, err := New(id, peers, &memTransport{self: id, net: network}, machines[i], &memStorage{})
+		node, err := New(Peer{ID: id}, peers, &memTransport{self: id, net: network}, machines[i], &memStorage{})
 		if err != nil {
 			t.Fatalf("New %s: %v", id, err)
 		}
