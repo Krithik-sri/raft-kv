@@ -40,6 +40,7 @@ func (r *Raft) applyCommitted() {
 
 	pending := slices.Clone(r.log[start : start+count])
 	r.lastApplied = first + uint64(count) - 1
+	r.notifyProgressLocked()
 
 	r.mu.Unlock()
 

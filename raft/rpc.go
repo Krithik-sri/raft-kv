@@ -91,6 +91,8 @@ func (r *Raft) replicateTo(ctx context.Context, peer Peer, term uint64) {
 		return
 	}
 
+	barrier := r.currentBarrier()
+
 	req, ok := r.makeAppendEntriesRequestFor(peer.ID, term)
 	if !ok {
 		return
@@ -114,7 +116,7 @@ func (r *Raft) replicateTo(ctx context.Context, peer Peer, term uint64) {
 	}
 
 	if resp.Success {
-		r.advancePeerProgress(peer.ID, req.PrevLogIndex+uint64(len(req.Entries)), term)
+		r.advancePeerProgress(peer.ID, req.PrevLogIndex+uint64(len(req.Entries)), term, barrier)
 		return
 	}
 

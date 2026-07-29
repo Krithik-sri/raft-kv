@@ -14,6 +14,8 @@ func (r *Raft) needsSnapshot(peerID NodeID) bool {
 }
 
 func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
+	barrier := r.currentBarrier()
+
 	r.mu.Lock()
 
 	if r.state != Leader || r.currentTerm != term {
@@ -62,7 +64,7 @@ func (r *Raft) sendSnapshot(ctx context.Context, peer Peer, term uint64) {
 		return
 	}
 
-	r.advancePeerProgress(peer.ID, req.LastIncludedIndex, term)
+	r.advancePeerProgress(peer.ID, req.LastIncludedIndex, term, barrier)
 }
 
 func (r *Raft) HandleInstallSnapshot(
