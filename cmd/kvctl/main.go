@@ -19,6 +19,9 @@ commands:
   put <key> <value>
   delete <key>
   cas <key> <expected> <value>
+  members
+  add <id> <address>
+  remove <id>
 
 flags:
 `)
@@ -27,7 +30,7 @@ flags:
 
 func run() error {
 	peers := flag.String("peers", "", "comma separated cluster addresses")
-	timeout := flag.Duration("timeout", 5*time.Second, "request timeout")
+	timeout := flag.Duration("timeout", 5*time.Second, "request timeout (add needs more, it waits for the catch-up)")
 	stale := flag.Bool("stale", false, "allow a possibly out-of-date read (get only)")
 	flag.Usage = usage
 	flag.Parse()
@@ -100,6 +103,42 @@ func run() error {
 		}
 		if !swapped {
 			return fmt.Errorf("compare-and-swap rejected: %q does not hold %q", args[1], args[2])
+		}
+		fmt.Println("ok")
+
+	case "members":
+		members, leaderID, err := kv.Members(ctx)
+		if err != nil {
+			return err
+		}
+
+		for _, m := range members {
+			role := "voter"
+			if !m.Voter {
+				role = "learner"
+			}
+			marker := " "
+			if m.ID == leaderID {
+				marker = "*"
+			}
+			fmt.Printf("%s %-8s %-22s %s\n", marker, m.ID, m.Address, role)
+		}
+
+	case "add":
+		if len(args) != 3 {
+			return fmt.Errorf("add requires an id and an address")
+		}
+		if err := kv.AddServer(ctx, args[1], args[2]); err != nil {
+			return err
+		}
+		fmt.Println("ok")
+
+	case "remove":
+		if len(args) != 2 {
+			return fmt.Errorf("remove requires exactly one id")
+		}
+		if err := kv.RemoveServer(ctx, args[1]); err != nil {
+			return err
 		}
 		fmt.Println("ok")
 

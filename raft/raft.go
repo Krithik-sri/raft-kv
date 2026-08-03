@@ -71,13 +71,37 @@ type Raft struct {
 	progressCh      chan struct{}
 }
 
+// Option tweaks how a node starts up.
+type Option func(*startupOptions)
+
+type startupOptions struct {
+	joining bool
+}
+
+// Joining says this machine is being added to a cluster that already exists,
+// rather than helping to form a new one. It starts as a learner: no elections,
+// no counting itself, until the cluster's own configuration reaches it.
+//
+// Without this, a machine started with an empty peer list would decide it is a
+// one-node cluster, win an election against nobody, and be very confident about
+// a log it has never seen.
+func Joining() Option {
+	return func(o *startupOptions) { o.joining = true }
+}
+
 func New(
 	self Peer,
 	peers []Peer,
 	transport Transport,
 	stateMachine StateMachine,
 	storage Storage,
+	opts ...Option,
 ) (*Raft, error) {
+	var startup startupOptions
+	for _, opt := range opts {
+		opt(&startup)
+	}
+
 	r := &Raft{
 		id:           self.ID,
 		address:      self.Address,
@@ -125,6 +149,9 @@ func New(
 	base := state.Config
 	if base == nil {
 		bootstrap := configurationFromPeers(self.ID, self.Address, peers)
+		if startup.joining {
+			bootstrap = configurationForJoiner(self.ID, self.Address, peers)
+		}
 		base = &bootstrap
 	}
 

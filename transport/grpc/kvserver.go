@@ -32,6 +32,19 @@ func NewKVServer(node *raft.Raft, store *kvstore.Store, peers []raft.Peer) *KVSe
 	}
 }
 
+// addressFor prefers the live configuration over the list this process was
+// started with, because the cluster can be reshaped since then and the startup
+// list has no idea about anyone who joined afterwards.
+func (s *KVServer) addressFor(id raft.NodeID) string {
+	for _, m := range s.node.Configuration().Members {
+		if m.ID == id && m.Address != "" {
+			return m.Address
+		}
+	}
+
+	return s.addresses[id]
+}
+
 func (s *KVServer) redirect() *raftpb.LeaderRedirect {
 	id, isLeader := s.node.LeaderHint()
 	if isLeader || id == "" {
@@ -40,7 +53,7 @@ func (s *KVServer) redirect() *raftpb.LeaderRedirect {
 
 	return &raftpb.LeaderRedirect{
 		LeaderId:      string(id),
-		LeaderAddress: s.addresses[id],
+		LeaderAddress: s.addressFor(id),
 	}
 }
 
@@ -169,5 +182,65 @@ func (s *KVServer) CompareAndSwap(
 	return &raftpb.CompareAndSwapResponse{
 		Redirect: redirect,
 		Swapped:  result.Swapped,
+	}, nil
+}
+
+func (s *KVServer) AddServer(
+	ctx context.Context,
+	req *raftpb.AddServerRequest,
+) (*raftpb.AddServerResponse, error) {
+	err := s.node.AddServer(ctx, raft.Peer{
+		ID:      raft.NodeID(req.Id),
+		Address: req.Address,
+	})
+
+	if errors.Is(err, raft.ErrNotLeader) || errors.Is(err, raft.ErrLostLeadership) {
+		return &raftpb.AddServerResponse{Redirect: s.redirect()}, nil
+	}
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+
+	return &raftpb.AddServerResponse{}, nil
+}
+
+func (s *KVServer) RemoveServer(
+	ctx context.Context,
+	req *raftpb.RemoveServerRequest,
+) (*raftpb.RemoveServerResponse, error) {
+	err := s.node.RemoveServer(ctx, raft.NodeID(req.Id))
+
+	if errors.Is(err, raft.ErrNotLeader) || errors.Is(err, raft.ErrLostLeadership) {
+		return &raftpb.RemoveServerResponse{Redirect: s.redirect()}, nil
+	}
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+
+	return &raftpb.RemoveServerResponse{}, nil
+}
+
+// Members is answered by whichever node you asked. It reads that node's own
+// view of the configuration, which can lag the leader by a moment during a
+// change. Good enough for looking at, not something to make decisions from.
+func (s *KVServer) Members(
+	ctx context.Context,
+	req *raftpb.MembersRequest,
+) (*raftpb.MembersResponse, error) {
+	config := s.node.Configuration()
+	leaderID, _ := s.node.LeaderHint()
+
+	members := make([]*raftpb.Member, 0, len(config.Members))
+	for _, m := range config.Members {
+		members = append(members, &raftpb.Member{
+			Id:      string(m.ID),
+			Address: m.Address,
+			Voter:   m.Voter,
+		})
+	}
+
+	return &raftpb.MembersResponse{
+		Members:  members,
+		LeaderId: string(leaderID),
 	}, nil
 }

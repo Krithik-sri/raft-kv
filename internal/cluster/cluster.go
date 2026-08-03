@@ -212,3 +212,67 @@ func (c *Cluster) WaitForLeader(timeout time.Duration) *Node {
 
 	return nil
 }
+
+// Join starts one more node in joining mode and returns it. The cluster does
+// not know about it yet; something still has to call AddServer. Its address is
+// appended to c.Addresses so a client built from those can reach it afterwards.
+func (c *Cluster) Join(id raft.NodeID, dataDir string) (*Node, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("listen: %w", err)
+	}
+
+	address := listener.Addr().String()
+
+	peers := make([]raft.Peer, 0, len(c.Nodes))
+	for _, node := range c.Nodes {
+		peers = append(peers, raft.Peer{ID: node.ID, Address: node.Address})
+	}
+
+	persist, err := storage.Open(filepath.Join(dataDir, string(id)+".log"))
+	if err != nil {
+		listener.Close()
+		return nil, err
+	}
+
+	store := kvstore.New()
+	self := raft.Peer{ID: id, Address: address}
+
+	node, err := raft.New(
+		self,
+		peers,
+		&grpctransport.Transport{},
+		store,
+		persist,
+		raft.Joining(),
+	)
+	if err != nil {
+		listener.Close()
+		persist.Close()
+		return nil, fmt.Errorf("new node %s: %w", id, err)
+	}
+
+	server := grpc.NewServer()
+	raftpb.RegisterRaftServiceServer(server, grpctransport.NewServer(node))
+	raftpb.RegisterKVServiceServer(server, grpctransport.NewKVServer(node, store, peers))
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go server.Serve(listener)
+	go node.Start(ctx)
+
+	joined := &Node{
+		ID:      id,
+		Address: address,
+		Raft:    node,
+		Store:   store,
+		server:  server,
+		storage: persist,
+		cancel:  cancel,
+	}
+
+	c.Nodes = append(c.Nodes, joined)
+	c.Addresses = append(c.Addresses, address)
+
+	return joined, nil
+}

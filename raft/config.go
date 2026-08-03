@@ -70,6 +70,21 @@ func configurationFromPeers(self NodeID, address string, peers []Peer) Configura
 	return Configuration{Members: members}
 }
 
+// configurationForJoiner is the starting point for a machine being added to a
+// cluster that already exists. It lists itself as a learner, which keeps it from
+// campaigning or counting itself before the cluster has actually admitted it.
+// The real membership arrives soon after, in the log or in a snapshot.
+func configurationForJoiner(self NodeID, address string, peers []Peer) Configuration {
+	members := make([]Member, 0, len(peers)+1)
+	members = append(members, Member{ID: self, Address: address, Voter: false})
+
+	for _, p := range peers {
+		members = append(members, Member{ID: p.ID, Address: p.Address, Voter: true})
+	}
+
+	return Configuration{Members: members}
+}
+
 func EncodeConfiguration(c Configuration) ([]byte, error) {
 	data, err := json.Marshal(c)
 	if err != nil {

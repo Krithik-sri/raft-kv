@@ -277,3 +277,66 @@ func (c *Client) CompareAndSwap(
 
 	return swapped, err
 }
+
+// Member is one machine in the cluster, as reported by whichever node answered.
+type Member struct {
+	ID      string
+	Address string
+	Voter   bool
+}
+
+// AddServer brings a machine into the cluster. It returns once the machine has
+// caught up and been given a vote, which on a cluster with a big state machine
+// can take a while, so give it a generous context.
+func (c *Client) AddServer(ctx context.Context, id, address string) error {
+	return c.do(ctx, func(service raftpb.KVServiceClient) (*raftpb.LeaderRedirect, error) {
+		resp, err := service.AddServer(ctx, &raftpb.AddServerRequest{
+			Id:      id,
+			Address: address,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		return resp.Redirect, nil
+	})
+}
+
+// RemoveServer takes a machine out of the cluster. Removing the leader is
+// allowed; it stands down once the change commits.
+func (c *Client) RemoveServer(ctx context.Context, id string) error {
+	return c.do(ctx, func(service raftpb.KVServiceClient) (*raftpb.LeaderRedirect, error) {
+		resp, err := service.RemoveServer(ctx, &raftpb.RemoveServerRequest{Id: id})
+		if err != nil {
+			return nil, err
+		}
+
+		return resp.Redirect, nil
+	})
+}
+
+// Members lists the cluster as the node you reached understands it. During a
+// membership change different nodes can answer differently for a moment.
+func (c *Client) Members(ctx context.Context) ([]Member, string, error) {
+	var (
+		members  []Member
+		leaderID string
+	)
+
+	err := c.do(ctx, func(service raftpb.KVServiceClient) (*raftpb.LeaderRedirect, error) {
+		resp, err := service.Members(ctx, &raftpb.MembersRequest{})
+		if err != nil {
+			return nil, err
+		}
+
+		members = members[:0]
+		for _, m := range resp.Members {
+			members = append(members, Member{ID: m.Id, Address: m.Address, Voter: m.Voter})
+		}
+		leaderID = resp.LeaderId
+
+		return nil, nil
+	})
+
+	return members, leaderID, err
+}

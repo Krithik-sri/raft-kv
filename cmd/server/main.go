@@ -46,6 +46,7 @@ func main() {
 	peersFlag := flag.String("peers", "", "comma separated peers in id=address format")
 	dataDir := flag.String("data-dir", "data", "directory for persistent raft state")
 	logLevel := flag.String("log-level", "info", "debug, info, warn or error")
+	join := flag.Bool("join", false, "joining a cluster that already exists, rather than forming a new one")
 	flag.Parse()
 
 	var level slog.Level
@@ -81,12 +82,18 @@ func main() {
 
 	raftTransport := &grpctransport.Transport{}
 	store := kvstore.New()
+	var opts []raft.Option
+	if *join {
+		opts = append(opts, raft.Joining())
+	}
+
 	raftNode, err := raft.New(
 		raft.Peer{ID: raft.NodeID(*id), Address: *addr},
 		peers,
 		raftTransport,
 		store,
 		persistence,
+		opts...,
 	)
 	if err != nil {
 		log.Fatalf("failed to create raft node: %v", err)
