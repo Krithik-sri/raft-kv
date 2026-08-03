@@ -404,3 +404,80 @@ func TestReplacedMachineLearnsMembershipFromSnapshot(t *testing.T) {
 		)
 	}
 }
+
+// Membership churn while the cluster is busy. Everything else in this file
+// changes the configuration on a quiet cluster, which is the easy case: nothing
+// is reading the membership at the moment it changes.
+//
+// This is also the only test that puts a writer and a configuration change in
+// the same instant, which is what the race detector needs in order to have an
+// opinion about any of this.
+func TestMembershipChurnUnderLoad(t *testing.T) {
+	nodes, _, network, cancel := startClusterWithThreshold(t, 3, 20)
+	defer cancel()
+
+	waitForLeader(t, nodes, 15*time.Second)
+
+	ctx, stop := context.WithTimeout(context.Background(), 90*time.Second)
+	defer stop()
+
+	joinNode(t, ctx, network, "n4", []NodeID{"n1", "n2", "n3"}, 20)
+
+	writes := make(chan struct{})
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		for i := 0; ; i++ {
+			select {
+			case <-writes:
+				return
+			default:
+			}
+
+			leader := currentLeader(nodes)
+			if leader == nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+
+			callCtx, cancelCall := context.WithTimeout(ctx, 2*time.Second)
+			// A write can legitimately fail mid-handover. We are looking for
+			// races and corruption here, not for a perfect success rate.
+			_, _ = leader.Propose(callCtx, []byte(fmt.Sprintf("churn-%d", i)))
+			cancelCall()
+		}
+	}()
+
+	for round := range 3 {
+		leader := waitForLeader(t, nodes, 20*time.Second)
+
+		if err := leader.AddServer(ctx, Peer{ID: "n4", Address: "n4"}); err != nil {
+			close(writes)
+			<-done
+			t.Fatalf("round %d AddServer: %v", round, err)
+		}
+
+		leader = waitForLeader(t, nodes, 20*time.Second)
+
+		if err := leader.RemoveServer(ctx, "n4"); err != nil {
+			close(writes)
+			<-done
+			t.Fatalf("round %d RemoveServer: %v", round, err)
+		}
+	}
+
+	close(writes)
+	<-done
+
+	leader := waitForLeader(t, nodes, 20*time.Second)
+
+	config := leader.Configuration()
+	if len(config.Members) != 3 {
+		t.Errorf("ended with %d members, want 3: %+v", len(config.Members), config.Members)
+	}
+	if config.contains("n4") {
+		t.Error("n4 is still a member after being removed on the last round")
+	}
+}

@@ -83,7 +83,8 @@ You need Go 1.26 or newer.
 
 ```bash
 go build ./...
-go test ./...                              # 108 tests
+go test ./...                              # 109 tests
+go test -race ./...                        # same, with the race detector
 ./scripts/crash-test.sh                    # kills nodes with -9, over and over
 ./scripts/chaos-sweep.sh --seeds 20        # breaks the network, checks nothing broke
 ./scripts/start-cluster.sh                 # five nodes, Ctrl-C to stop

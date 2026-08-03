@@ -3,7 +3,8 @@
 Back to the [README](README.md).
 
 ```bash
-go test ./...                                       # 108 tests
+go test ./...                                       # 109 tests
+go test -race ./...                                 # the same, under the race detector
 ./scripts/crash-test.sh                             # kills nodes with -9
 ./scripts/chaos-sweep.sh --seeds 20                 # breaks the network
 go test ./raft/ -run TestChaos -chaos.duration=30m  # the long one
@@ -98,6 +99,48 @@ I found that out the hard way. My first attempt at the whole thing passed happil
 barrier turned off, which meant it was proving nothing at all. Two reasons: the test killed
 leaders instead of partitioning them, and every caller talked to the same node. Fixing both, and
 then testing the checker separately, is what turned it into evidence.
+
+## The race detector
+
+Six of the seven bugs below were mutex mistakes, and for most of this repo's life the race
+detector had never run, because it needs a C compiler and I didn't have one. I have one now.
+
+```bash
+go test -race ./...
+```
+
+Clean. Whole suite, twice, plus three minutes of chaos.
+
+That result was worth almost nothing until I checked it, and checking it is the interesting part.
+
+The race detector is not a code reader. It reports races it actually watches happen. So a clean
+run tells you about the code paths your tests ran *concurrently*, and nothing whatsoever about
+the rest.
+
+To find out which of those I had, I put a real bug back. When membership moved into the log I had
+to fix three places that read the peer list with no lock, safe until then only because the list
+never changed. I reintroduced one of them and ran the suite again.
+
+Nothing. Clean.
+
+Then the chaos test, three minutes of partitions and dropped messages. Also clean. Chaos never
+changes the membership, so nothing was ever writing the thing my broken code was reading. No
+writer, no race, and the detector was right to stay quiet.
+
+The gap was that every membership test changed the configuration on a *quiet* cluster. Nothing
+was reading the peer list at the moment it changed, so the one bug I most wanted to catch could
+not physically occur. So `TestMembershipChurnUnderLoad` adds and removes a machine three times
+over while a writer hammers the leader. Against the reintroduced bug:
+
+```
+WARNING: DATA RACE
+  raft.(*Raft).adoptConfigLocked()
+  raft.(*Raft).currentPeers()
+  raft.(*Raft).replicateToAll()
+```
+
+Which is the exact pair of lines. Now "race clean" means something, because I know at least one
+thing it would have caught.
 
 ---
 

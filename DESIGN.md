@@ -243,6 +243,6 @@ didn't.
 them all into every snapshot. Real systems expire these. Mine doesn't, which is a polite way of
 saying I skipped it.
 
-**I've never run the race detector.** It needs a C compiler and there isn't one on this laptop.
-Six of my seven bugs were mutex mistakes. So the race detector is far and away the most useful
-thing missing from this repo, and yes, I do see the irony.
+**Nothing here is proven for a cluster bigger than seven, or on real hardware.** Every number in
+this repo comes off one laptop with all the machines in one process. The shape should hold. The
+numbers will not.
