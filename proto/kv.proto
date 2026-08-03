@@ -9,6 +9,10 @@ service KVService {
     rpc Put(PutRequest) returns (PutResponse);
     rpc Delete(DeleteRequest) returns (DeleteResponse);
     rpc CompareAndSwap(CompareAndSwapRequest) returns (CompareAndSwapResponse);
+
+    rpc AddServer(AddServerRequest) returns (AddServerResponse);
+    rpc RemoveServer(RemoveServerRequest) returns (RemoveServerResponse);
+    rpc Members(MembersRequest) returns (MembersResponse);
 }
 
 message LeaderRedirect {
@@ -62,4 +66,35 @@ message CompareAndSwapRequest {
 message CompareAndSwapResponse {
     LeaderRedirect redirect = 1;
     bool swapped = 2;
+}
+
+message AddServerRequest {
+    string id = 1;
+    string address = 2;
+}
+
+message AddServerResponse {
+    LeaderRedirect redirect = 1;
+}
+
+message RemoveServerRequest {
+    string id = 1;
+}
+
+message RemoveServerResponse {
+    LeaderRedirect redirect = 1;
+}
+
+message MembersRequest {}
+
+message Member {
+    string id = 1;
+    string address = 2;
+    bool voter = 3;
+}
+
+message MembersResponse {
+    LeaderRedirect redirect = 1;
+    repeated Member members = 2;
+    string leader_id = 3;
 }

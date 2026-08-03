@@ -23,6 +23,9 @@ const (
 	KVService_Put_FullMethodName            = "/raft.KVService/Put"
 	KVService_Delete_FullMethodName         = "/raft.KVService/Delete"
 	KVService_CompareAndSwap_FullMethodName = "/raft.KVService/CompareAndSwap"
+	KVService_AddServer_FullMethodName      = "/raft.KVService/AddServer"
+	KVService_RemoveServer_FullMethodName   = "/raft.KVService/RemoveServer"
+	KVService_Members_FullMethodName        = "/raft.KVService/Members"
 )
 
 // KVServiceClient is the client API for KVService service.
@@ -33,6 +36,9 @@ type KVServiceClient interface {
 	Put(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error)
 	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error)
 	CompareAndSwap(ctx context.Context, in *CompareAndSwapRequest, opts ...grpc.CallOption) (*CompareAndSwapResponse, error)
+	AddServer(ctx context.Context, in *AddServerRequest, opts ...grpc.CallOption) (*AddServerResponse, error)
+	RemoveServer(ctx context.Context, in *RemoveServerRequest, opts ...grpc.CallOption) (*RemoveServerResponse, error)
+	Members(ctx context.Context, in *MembersRequest, opts ...grpc.CallOption) (*MembersResponse, error)
 }
 
 type kVServiceClient struct {
@@ -83,6 +89,36 @@ func (c *kVServiceClient) CompareAndSwap(ctx context.Context, in *CompareAndSwap
 	return out, nil
 }
 
+func (c *kVServiceClient) AddServer(ctx context.Context, in *AddServerRequest, opts ...grpc.CallOption) (*AddServerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddServerResponse)
+	err := c.cc.Invoke(ctx, KVService_AddServer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *kVServiceClient) RemoveServer(ctx context.Context, in *RemoveServerRequest, opts ...grpc.CallOption) (*RemoveServerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveServerResponse)
+	err := c.cc.Invoke(ctx, KVService_RemoveServer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *kVServiceClient) Members(ctx context.Context, in *MembersRequest, opts ...grpc.CallOption) (*MembersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MembersResponse)
+	err := c.cc.Invoke(ctx, KVService_Members_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // KVServiceServer is the server API for KVService service.
 // All implementations must embed UnimplementedKVServiceServer
 // for forward compatibility.
@@ -91,6 +127,9 @@ type KVServiceServer interface {
 	Put(context.Context, *PutRequest) (*PutResponse, error)
 	Delete(context.Context, *DeleteRequest) (*DeleteResponse, error)
 	CompareAndSwap(context.Context, *CompareAndSwapRequest) (*CompareAndSwapResponse, error)
+	AddServer(context.Context, *AddServerRequest) (*AddServerResponse, error)
+	RemoveServer(context.Context, *RemoveServerRequest) (*RemoveServerResponse, error)
+	Members(context.Context, *MembersRequest) (*MembersResponse, error)
 	mustEmbedUnimplementedKVServiceServer()
 }
 
@@ -112,6 +151,15 @@ func (UnimplementedKVServiceServer) Delete(context.Context, *DeleteRequest) (*De
 }
 func (UnimplementedKVServiceServer) CompareAndSwap(context.Context, *CompareAndSwapRequest) (*CompareAndSwapResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CompareAndSwap not implemented")
+}
+func (UnimplementedKVServiceServer) AddServer(context.Context, *AddServerRequest) (*AddServerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddServer not implemented")
+}
+func (UnimplementedKVServiceServer) RemoveServer(context.Context, *RemoveServerRequest) (*RemoveServerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveServer not implemented")
+}
+func (UnimplementedKVServiceServer) Members(context.Context, *MembersRequest) (*MembersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Members not implemented")
 }
 func (UnimplementedKVServiceServer) mustEmbedUnimplementedKVServiceServer() {}
 func (UnimplementedKVServiceServer) testEmbeddedByValue()                   {}
@@ -206,6 +254,60 @@ func _KVService_CompareAndSwap_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KVService_AddServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddServerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServiceServer).AddServer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KVService_AddServer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServiceServer).AddServer(ctx, req.(*AddServerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KVService_RemoveServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveServerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServiceServer).RemoveServer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KVService_RemoveServer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServiceServer).RemoveServer(ctx, req.(*RemoveServerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KVService_Members_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MembersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServiceServer).Members(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KVService_Members_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServiceServer).Members(ctx, req.(*MembersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // KVService_ServiceDesc is the grpc.ServiceDesc for KVService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -228,6 +330,18 @@ var KVService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CompareAndSwap",
 			Handler:    _KVService_CompareAndSwap_Handler,
+		},
+		{
+			MethodName: "AddServer",
+			Handler:    _KVService_AddServer_Handler,
+		},
+		{
+			MethodName: "RemoveServer",
+			Handler:    _KVService_RemoveServer_Handler,
+		},
+		{
+			MethodName: "Members",
+			Handler:    _KVService_Members_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
