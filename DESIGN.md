@@ -163,6 +163,47 @@ mean what they always meant.
 It's worth about 1.8x. Numbers and the ceiling I measured first are in
 [BENCHMARKS.md](BENCHMARKS.md).
 
+**Machines can join and leave while it runs.** The membership is not a startup flag. It lives in
+the log as an ordinary entry, which is the only way it can change without stopping the cluster.
+
+I used the one-at-a-time approach from §4.1 of Ongaro's thesis rather than the joint consensus in
+§6 of the paper. Adding or removing a single machine can never split the old majority from the
+new one, so all the two-phase Cold,new machinery disappears. It is what etcd does and there is
+much less to get wrong.
+
+The rule that reads like a mistake: a machine starts using a new configuration the moment it
+appears in its log, before it commits. That sounds reckless and it is exactly backwards to how
+everything else here works. But a configuration commits by reaching a majority, and you cannot
+ask the right majority unless you are already using the new membership. Waiting for the commit
+would mean waiting on a question you refuse to ask.
+
+Two more rules do the real safety work, and both are easy to leave out:
+
+Only one change may be uncommitted at a time. With two in flight you genuinely cannot say which
+majority you need, because you do not yet know which configuration is real.
+
+The leader must have committed an entry from its own term before it starts a change. The original
+write-up of one-at-a-time missed this one and it is unsafe without it. A leader that has
+committed nothing of its own does not reliably know where the commit point is, and can shrink the
+cluster out from under a write that was already acknowledged.
+
+**A new machine arrives without a vote.** It joins as a learner: it gets the log shipped to it
+but is not counted towards any majority. Once it has caught up, a second configuration entry
+promotes it.
+
+Skipping this is tempting and wrong. Add a voter straight away and the majority gets bigger the
+instant the entry is appended, while the new machine is still empty. On a healthy cluster that is
+a blink. On a cluster that is already one machine down, it is an outage that lasts as long as a
+full snapshot transfer.
+
+**The configuration travels with snapshots.** A machine that catches up through a snapshot can
+have the entry that admitted it buried inside that snapshot. Replay the log all you like, it is
+gone. So the membership rides along with the snapshot data.
+
+I had this wrong at first, and my test for it passed anyway, because in that test the
+configuration entries happened to land after the snapshot point. The real case is a replacement
+machine with an empty disk joining a cluster that has compacted past its own admission.
+
 **Duplicate detection lives in the state machine, not the server.** Every machine replays the
 same log, so they all have to agree on what counts as a duplicate. If the leader skips a retry
 and the followers apply it, they've drifted apart and nothing tells you.
@@ -201,9 +242,6 @@ didn't.
 **Client sessions leak.** I keep one duplicate-detection record per client, forever, and copy
 them all into every snapshot. Real systems expire these. Mine doesn't, which is a polite way of
 saying I skipped it.
-
-**You can't change the cluster membership.** The machine list is fixed at startup. Adding and
-removing nodes safely is §6 of the paper and it isn't here.
 
 **I've never run the race detector.** It needs a C compiler and there isn't one on this laptop.
 Six of my seven bugs were mutex mistakes. So the race detector is far and away the most useful

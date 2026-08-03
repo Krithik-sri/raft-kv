@@ -25,7 +25,8 @@ on Windows. We all have our burdens. (If i could switch to linux i would trust m
 
 Picks a leader. Copies every write to a majority of machines before saying "done". Survives
 crashes, because everything hits the disk before anyone gets an answer. Trims its own log so it
-doesn't grow forever. Retries on your behalf when the leader changes.
+doesn't grow forever. Retries on your behalf when the leader changes. Lets you add and remove
+machines without stopping anything.
 
 Five nodes, gRPC between them, no external raft libraries (this is not a wrapper). gRPC is the
 only third-party thing that ships in the binary. Tests also use Porcupine to check
@@ -74,8 +75,6 @@ Full write-ups in [TESTING.md](TESTING.md). They're the best part of this repo.
 
 Snapshots go over the wire in one message, so a big state machine won't transfer at all.
 
-You can't add or remove machines while it's running. The list is fixed at startup.
-
 Longer list, with reasons, in [DESIGN.md](DESIGN.md).
 
 ## Running it
@@ -84,7 +83,7 @@ You need Go 1.26 or newer.
 
 ```bash
 go build ./...
-go test ./...                              # 88 tests
+go test ./...                              # 108 tests
 ./scripts/crash-test.sh                    # kills nodes with -9, over and over
 ./scripts/chaos-sweep.sh --seeds 20        # breaks the network, checks nothing broke
 ./scripts/start-cluster.sh                 # five nodes, Ctrl-C to stop
@@ -107,7 +106,24 @@ One node by hand, if you want to see the moving parts:
 go run ./cmd/server --id node1 --addr localhost:5001 --peers node2=localhost:5002,node3=localhost:5003 --data-dir data
 ```
 
-`kvctl` does `get`, `put`, `delete` and `cas`. `get` exits non-zero when the key is missing, so
+Machines can come and go while it runs:
+
+```bash
+go run ./cmd/server --id node4 --addr localhost:5004 --peers node1=localhost:5001 --data-dir data --join
+
+go run ./cmd/kvctl --peers localhost:5001 --timeout 30s add node4 localhost:5004
+go run ./cmd/kvctl --peers localhost:5001 members
+go run ./cmd/kvctl --peers localhost:5001 --timeout 30s remove node2
+```
+
+`--join` matters. Without it a machine started on its own decides it is a one-node cluster, wins
+an election against nobody, and is extremely confident about a log it has never seen.
+
+A new machine arrives as a learner. It gets the log but no vote, so it can't make the majority
+harder to reach while it is still catching up. Once it has the log it gets promoted. `members`
+shows you which is which, and stars the leader.
+
+`kvctl` does `get`, `put`, `delete`, `cas`, `members`, `add` and `remove`. `get` exits non-zero when the key is missing, so
 you can use it in scripts. `get --stale` skips the leader check if you want speed over
 freshness.
 
